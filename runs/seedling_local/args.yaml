@@ -5,13 +5,13 @@ data: /Users/nikolas/projetogerminação/data_train.yaml
 epochs: 100
 time: null
 patience: 15
-batch: 8
+batch: 4
 imgsz: 640
 save: true
 save_period: -1
 cache: false
 device: mps
-workers: 4
+workers: 0
 project: /Users/nikolas/projetogerminação/runs
 name: seedling_local
 exist_ok: true
