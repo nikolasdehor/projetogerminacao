@@ -439,9 +439,13 @@ function addTyping() {
 }
 
 function formatMd(text) {
+  if (typeof marked !== 'undefined') {
+    return marked.parse(text);
+  }
+  // Fallback
   return text
     .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-    .replace(/`(.*?)`/g, '<code style="background:rgba(255,255,255,0.08);padding:1px 5px;border-radius:3px;font-size:0.83em;font-family:var(--font-mono)">$1</code>')
+    .replace(/`(.*?)`/g, '<code>$1</code>')
     .replace(/\*(.*?)\*/g, '<em>$1</em>')
     .replace(/\n\n/g, '<br><br>')
     .replace(/\n/g, '<br>');
