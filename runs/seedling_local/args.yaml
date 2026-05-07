@@ -2,11 +2,11 @@ task: detect
 mode: train
 model: yolo11s.pt
 data: /Users/nikolas/projetogerminação/data_train.yaml
-epochs: 50
+epochs: 100
 time: null
 patience: 15
 batch: 8
-imgsz: 512
+imgsz: 640
 save: true
 save_period: -1
 cache: false
