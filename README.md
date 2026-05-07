@@ -1,7 +1,7 @@
 <div align="center">
   <img src="./static/banner.svg" alt="GerminaVision Banner" width="100%">
 
-  # 🌱 GerminaVision
+  
 
   **O futuro do monitoramento agrícola chegou.** <br>
   *Sistema inteligente de visão computacional para detecção de germinação, contagem de folhas e análise de viabilidade comercial.*
