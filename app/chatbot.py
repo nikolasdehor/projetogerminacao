@@ -92,7 +92,16 @@ def _contexto_db(db_path: str) -> dict:
 
 
 def _normalizar(texto: str) -> str:
-    return re.sub(r"[^a-z0-9 áéíóúãõâêîôûàç]", " ", texto.lower().strip())
+    return re.sub(r"[^a-z0-9 áéíóúãõâêîôûàç%]", " ", texto.lower().strip())
+
+def _has_keyword(msg: str, keywords: list[str]) -> bool:
+    """Verifica se alguma das keywords exatas (word boundaries) está na mensagem."""
+    for w in keywords:
+        if w == "%" and "%" in msg:
+            return True
+        if re.search(rf"\b{w}\b", msg):
+            return True
+    return False
 
 
 # ── Motor de resposta ──────────────────────────────────────────────────────────
@@ -103,7 +112,7 @@ def gerar_resposta(mensagem: str, db_path: str) -> str:
     words = set(msg.split())
 
     # ── Saudação ──────────────────────────────────────────────────────────────
-    if any(s in msg for s in SAUDACOES) and len(msg.split()) <= 5:
+    if _has_keyword(msg, SAUDACOES) and len(msg.split()) <= 5:
         return (
             f"{_hora_do_dia()}! 🌱 Sou o **GerminaBot**, assistente especializado "
             f"em monitoramento de germinação e crescimento de mudas.\n\n"
@@ -116,12 +125,12 @@ def gerar_resposta(mensagem: str, db_path: str) -> str:
         )
 
     # ── Despedida ─────────────────────────────────────────────────────────────
-    if any(d in msg for d in DESPEDIDAS):
+    if _has_keyword(msg, DESPEDIDAS):
         return "Até logo! 🌱 Bons cultivos e boa taxa de germinação!"
 
     # ── Classes do modelo ─────────────────────────────────────────────────────
     for cls, info in CLASSES_INFO.items():
-        if cls in msg or cls.replace("no", "sem ") in msg:
+        if _has_keyword(msg, [cls, cls.replace("no", "sem ")]):
             return (
                 f"**{info['nome']}** {info['cor'] and ''}\n\n"
                 f"📋 **O que é:** {info['desc']}\n\n"
@@ -129,7 +138,7 @@ def gerar_resposta(mensagem: str, db_path: str) -> str:
             )
 
     # ── Total / contagem geral ─────────────────────────────────────────────────
-    if any(w in msg for w in ["quantas", "quanto", "total", "plantas", "analisamos", "realizamos", "registros", "fizemos", "já fiz"]):
+    if _has_keyword(msg, ["quantas", "quanto", "total", "plantas", "analisamos", "realizamos", "registros", "fizemos", "já fiz"]):
         if ctx["total"] == 0:
             return "Ainda não há análises registradas. Faça o primeiro upload de uma imagem! 🌱"
         return (
@@ -142,7 +151,7 @@ def gerar_resposta(mensagem: str, db_path: str) -> str:
         )
 
     # ── Taxa de germinação ────────────────────────────────────────────────────
-    if any(w in msg for w in ["taxa", "germinação", "germinacao", "percentual", "porcentagem", "%"]):
+    if _has_keyword(msg, ["taxa", "germinação", "germinacao", "percentual", "porcentagem", "%"]):
         if ctx["total"] == 0:
             return "Você ainda não tem análises registradas. Faça o upload de uma imagem para começar!"
         resp = (
@@ -161,8 +170,23 @@ def gerar_resposta(mensagem: str, db_path: str) -> str:
             resp += "\n⚠️ Taxa abaixo do esperado. Revise qualidade das sementes, temperatura e umidade do substrato."
         return resp
 
+    # ── Probabilidade / Produção ──────────────────────────────────────────────
+    if _has_keyword(msg, ["probabilidade", "produção", "producao", "sucesso", "colheita", "safra", "lucro", "estimativa"]):
+        if ctx["total"] == 0:
+            return "Faça upload de pelo menos uma imagem para calcularmos a probabilidade de sucesso da sua produção."
+        
+        resp = f"🌾 **Estimativa de Produção:**\n\nSua taxa de germinação atual é de **{ctx['avg_germ']}%**.\n\n"
+        if ctx["avg_germ"] >= 80:
+            resp += "🌟 **Alta probabilidade de sucesso comercial.** Sua taxa garante um retorno financeiro excelente e máximo aproveitamento do espaço da estufa."
+        elif ctx["avg_germ"] >= 60:
+            resp += "⚖️ **Probabilidade moderada.** O retorno é viável, mas a perda de mudas (espaços vazios na bandeja) gera ineficiência. Tente identificar o que causou as falhas para subir a taxa."
+        else:
+            resp += "🚨 **Baixa probabilidade comercial.** Uma taxa inferior a 60% geralmente significa prejuízo, pois a mão de obra e insumos para os espaços vazios não se pagam. Tente replantar as falhas."
+        
+        return resp
+
     # ── Folhas ────────────────────────────────────────────────────────────────
-    if any(w in msg for w in ["folha", "folhas", "galho", "galhos", "conta", "contagem"]):
+    if _has_keyword(msg, ["folha", "folhas", "galho", "galhos", "conta", "contagem"]):
         return (
             "🍃 **Contagem de folhas/galhos:**\n\n"
             "O sistema usa uma heurística baseada em análise de área verde para estimar o número de folhas:\n\n"
@@ -175,7 +199,7 @@ def gerar_resposta(mensagem: str, db_path: str) -> str:
         )
 
     # ── YOLO / modelo ─────────────────────────────────────────────────────────
-    if any(w in msg for w in ["yolo", "modelo", "treino", "treinamento", "detecção", "deteccao", "ia", "inteligência", "rede neural"]):
+    if _has_keyword(msg, ["yolo", "modelo", "treino", "treinamento", "detecção", "deteccao", "ia", "inteligência", "rede neural"]):
         return (
             "🤖 **Sobre o modelo de detecção:**\n\n"
             "O sistema usa **YOLO11s** treinado no dataset de mudas do Roboflow com 768 imagens e 6 classes:\n\n"
@@ -191,13 +215,13 @@ def gerar_resposta(mensagem: str, db_path: str) -> str:
         )
 
     # ── Dica geral ────────────────────────────────────────────────────────────
-    if any(w in msg for w in ["dica", "dicas", "conselho", "como", "ajuda", "help", "problema", "erro"]):
+    if _has_keyword(msg, ["dica", "dicas", "conselho", "como", "ajuda", "help", "problema", "erro"]):
         import random
         dica = random.choice(DICAS_GERMINACAO)
         return f"🌿 **Dica de cultivo:**\n\n{dica}\n\nQuer mais dicas? É só perguntar!"
 
     # ── Histórico / série temporal ────────────────────────────────────────────
-    if any(w in msg for w in ["histórico", "historico", "análises", "analises", "registros", "dias", "evolução", "evolucao"]):
+    if _has_keyword(msg, ["histórico", "historico", "análises", "analises", "registros", "dias", "evolução", "evolucao"]):
         if ctx["total"] == 0:
             return "Você ainda não tem análises no histórico. Faça o upload de imagens e use o campo **Rótulo do dia** (D0, D1, D2...) para montar a série temporal!"
         return (
@@ -209,7 +233,7 @@ def gerar_resposta(mensagem: str, db_path: str) -> str:
         )
 
     # ── Sobre o projeto ───────────────────────────────────────────────────────
-    if any(w in msg for w in ["projeto", "sistema", "app", "aplicação", "aplicacao", "flask", "python"]):
+    if _has_keyword(msg, ["projeto", "sistema", "app", "aplicação", "aplicacao", "flask", "python"]):
         return (
             "🌱 **Sobre o GerminaVision:**\n\n"
             "Sistema de visão computacional para monitoramento automático de germinação e crescimento de mudas.\n\n"
