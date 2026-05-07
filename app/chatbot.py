@@ -128,6 +128,19 @@ def gerar_resposta(mensagem: str, db_path: str) -> str:
                 f"✅ **O que fazer:** {info['acao']}"
             )
 
+    # ── Total / contagem geral ─────────────────────────────────────────────────
+    if any(w in msg for w in ["quantas", "quanto", "total", "plantas", "analisamos", "realizamos", "registros", "fizemos", "já fiz"]):
+        if ctx["total"] == 0:
+            return "Ainda não há análises registradas. Faça o primeiro upload de uma imagem! 🌱"
+        return (
+            f"📊 **Resumo das análises:**\n\n"
+            f"- Total de imagens analisadas: **{ctx['total']}**\n"
+            f"- Taxa média de germinação: **{ctx['avg_germ']}%**\n"
+            f"- Média de folhas por muda: **{ctx['avg_leaf']}**\n"
+            + (f"- Última análise: **{ctx['last_germ']}%** de germinação\n" if ctx.get('last_germ') is not None else "")
+            + f"\n{'🎉 Excelente progresso!' if ctx['avg_germ'] >= 70 else '📈 Continue monitorando para melhorar a taxa!'}"
+        )
+
     # ── Taxa de germinação ────────────────────────────────────────────────────
     if any(w in msg for w in ["taxa", "germinação", "germinacao", "percentual", "porcentagem", "%"]):
         if ctx["total"] == 0:

@@ -33,6 +33,14 @@ function setProgress(pct, label) {
 function now() {
   return new Date().toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' });
 }
+function formatTs(ts) {
+  // "2026-05-06 22:05:35" → "06/05 22:05"
+  const [date, time] = (ts || '').split(' ');
+  if (!date || !time) return ts;
+  const [y, m, d] = date.split('-');
+  const [h, min] = time.split(':');
+  return `${d}/${m} ${h}:${min}`;
+}
 
 // ── Status ────────────────────────────────────────────────────────────────────
 async function checkStatus() {
@@ -191,7 +199,7 @@ function renderHistory(records) {
   body.innerHTML = records.map(r => `
     <tr>
       <td style="font-family:var(--font-mono);color:var(--text-3)">${r.id}</td>
-      <td>${r.timestamp}</td>
+      <td>${formatTs(r.timestamp)}</td>
       <td style="max-width:140px;overflow:hidden;text-overflow:ellipsis" title="${r.filename}">${r.filename}</td>
       <td>${r.day_label ? `<span class="pill pill-green">${r.day_label}</span>` : '<span style="color:var(--text-3)">—</span>'}</td>
       <td>${r.total_detected}</td>
