@@ -54,7 +54,7 @@ button { cursor: pointer; font-family: inherit; }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 1.75rem; backdrop-filter: blur(12px); box-shadow: var(--shadow); transition: border-color var(--t), box-shadow var(--t); }
 .card:hover { border-color: var(--border-h); box-shadow: var(--shadow), var(--glow); }
 .card-title { font-size: 1rem; font-weight: 600; margin-bottom: 1.25rem; }
-.card-sub { font-size: 0.78rem; color: var(--text-3); margin-top: -1rem; margin-bottom: 1.25rem; }
+.card-sub { font-size: 0.78rem; color: var(--text-3); margin-top: 0.2rem; margin-bottom: 1.25rem; }
 .card-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 1.25rem; gap: 1rem; }
 .card-header .card-title { margin-bottom: 0; }
 
