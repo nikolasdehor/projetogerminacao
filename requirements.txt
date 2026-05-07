@@ -5,3 +5,4 @@ torchvision>=0.18
 opencv-python-headless>=4.10
 Pillow>=10.4
 numpy>=1.26
+mcp>=1.0
