@@ -91,181 +91,75 @@ def _contexto_db(db_path: str) -> dict:
         return {"total": 0}
 
 
-def _normalizar(texto: str) -> str:
-    return re.sub(r"[^a-z0-9 áéíóúãõâêîôûàç%]", " ", texto.lower().strip())
-
-def _has_keyword(msg: str, keywords: list[str]) -> bool:
-    """Verifica se alguma das keywords exatas (word boundaries) está na mensagem."""
-    for w in keywords:
-        if w == "%" and "%" in msg:
-            return True
-        if re.search(rf"\b{w}\b", msg):
-            return True
-    return False
-
+import os
+import json
+import urllib.request
+import urllib.error
 
 # ── Motor de resposta ──────────────────────────────────────────────────────────
 
 def gerar_resposta(mensagem: str, db_path: str) -> str:
-    msg   = _normalizar(mensagem)
-    ctx   = _contexto_db(db_path)
-    words = set(msg.split())
+    ctx = _contexto_db(db_path)
+    
+    # Try to load .env manually (fallback se dotenv não estiver instalado)
+    try:
+        with open(".env") as f:
+            for line in f:
+                if line.startswith("OPENAI_API_KEY="):
+                    os.environ["OPENAI_API_KEY"] = line.strip().split("=", 1)[1]
+    except Exception:
+        pass
 
-    # ── Saudação ──────────────────────────────────────────────────────────────
-    if _has_keyword(msg, SAUDACOES) and len(msg.split()) <= 5:
+    api_key = os.environ.get("OPENAI_API_KEY")
+    
+    if not api_key or api_key == "your_openai_api_key_here":
         return (
-            f"{_hora_do_dia()}! 🌱 Sou o **GerminaBot**, assistente especializado "
-            f"em monitoramento de germinação e crescimento de mudas.\n\n"
-            f"Posso te ajudar com:\n"
-            f"- 🔍 Explicar as classes detectadas (seedling, weak, noseedling...)\n"
-            f"- 📊 Analisar seus resultados\n"
-            f"- 🌿 Dicas de cultivo e germinação\n"
-            f"- ❓ Tirar dúvidas sobre o projeto\n\n"
-            f"O que você quer saber?"
+            "⚠️ **Inteligência Artificial Pausada**\n\n"
+            "O GerminaBot agora usa IA Generativa real! Para funcionar, você precisa configurar a sua **API Key da OpenAI**.\n\n"
+            "Abra o arquivo `.env` na pasta do projeto e adicione a sua chave:\n"
+            "`OPENAI_API_KEY=sk-...`\n\n"
+            "👉 *Dica: você também pode conferir a aba **MCP API** no menu para integrar seu projeto com o Claude Desktop ou Cursor!*"
         )
 
-    # ── Despedida ─────────────────────────────────────────────────────────────
-    if _has_keyword(msg, DESPEDIDAS):
-        return "Até logo! 🌱 Bons cultivos e boa taxa de germinação!"
-
-    # ── Classes do modelo ─────────────────────────────────────────────────────
-    for cls, info in CLASSES_INFO.items():
-        if _has_keyword(msg, [cls, cls.replace("no", "sem ")]):
-            return (
-                f"**{info['nome']}** {info['cor'] and ''}\n\n"
-                f"📋 **O que é:** {info['desc']}\n\n"
-                f"✅ **O que fazer:** {info['acao']}"
-            )
-
-    # ── Total / contagem geral ─────────────────────────────────────────────────
-    if _has_keyword(msg, ["quantas", "quanto", "total", "plantas", "analisamos", "realizamos", "registros", "fizemos", "já fiz"]):
-        if ctx["total"] == 0:
-            return "Ainda não há análises registradas. Faça o primeiro upload de uma imagem! 🌱"
-        return (
-            f"📊 **Resumo das análises:**\n\n"
-            f"- Total de imagens analisadas: **{ctx['total']}**\n"
-            f"- Taxa média de germinação: **{ctx['avg_germ']}%**\n"
-            f"- Média de folhas por muda: **{ctx['avg_leaf']}**\n"
-            + (f"- Última análise: **{ctx['last_germ']}%** de germinação\n" if ctx.get('last_germ') is not None else "")
-            + f"\n{'🎉 Excelente progresso!' if ctx['avg_germ'] >= 70 else '📈 Continue monitorando para melhorar a taxa!'}"
-        )
-
-    # ── Taxa de germinação ────────────────────────────────────────────────────
-    if _has_keyword(msg, ["taxa", "germinação", "germinacao", "percentual", "porcentagem", "%"]):
-        if ctx["total"] == 0:
-            return "Você ainda não tem análises registradas. Faça o upload de uma imagem para começar!"
-        resp = (
-            f"📊 **Suas estatísticas de germinação:**\n\n"
-            f"- Total de análises: **{ctx['total']}**\n"
-            f"- Taxa média de germinação: **{ctx['avg_germ']}%**\n"
-            f"- Média de folhas por muda: **{ctx['avg_leaf']}**\n"
-        )
-        if ctx.get("days_tracked", 0) > 1:
-            resp += f"- Dias monitorados: **{ctx['days_tracked']}**\n"
-        if ctx["avg_germ"] >= 80:
-            resp += "\n🎉 Excelente! Taxa acima de 80% é considerada muito boa para produção comercial."
-        elif ctx["avg_germ"] >= 60:
-            resp += "\n👍 Taxa razoável. Verifique as cavidades com `noseedling` para identificar causas da falha."
-        else:
-            resp += "\n⚠️ Taxa abaixo do esperado. Revise qualidade das sementes, temperatura e umidade do substrato."
-        return resp
-
-    # ── Probabilidade / Produção ──────────────────────────────────────────────
-    if _has_keyword(msg, ["probabilidade", "produção", "producao", "sucesso", "colheita", "safra", "lucro", "estimativa"]):
-        if ctx["total"] == 0:
-            return "Faça upload de pelo menos uma imagem para calcularmos a probabilidade de sucesso da sua produção."
-        
-        resp = f"🌾 **Estimativa de Produção:**\n\nSua taxa de germinação atual é de **{ctx['avg_germ']}%**.\n\n"
-        if ctx["avg_germ"] >= 80:
-            resp += "🌟 **Alta probabilidade de sucesso comercial.** Sua taxa garante um retorno financeiro excelente e máximo aproveitamento do espaço da estufa."
-        elif ctx["avg_germ"] >= 60:
-            resp += "⚖️ **Probabilidade moderada.** O retorno é viável, mas a perda de mudas (espaços vazios na bandeja) gera ineficiência. Tente identificar o que causou as falhas para subir a taxa."
-        else:
-            resp += "🚨 **Baixa probabilidade comercial.** Uma taxa inferior a 60% geralmente significa prejuízo, pois a mão de obra e insumos para os espaços vazios não se pagam. Tente replantar as falhas."
-        
-        return resp
-
-    # ── Folhas ────────────────────────────────────────────────────────────────
-    if _has_keyword(msg, ["folha", "folhas", "galho", "galhos", "conta", "contagem"]):
-        return (
-            "🍃 **Contagem de folhas/galhos:**\n\n"
-            "O sistema usa uma heurística baseada em análise de área verde para estimar o número de folhas:\n\n"
-            "- **seedling**: geralmente 2–3 folhas\n"
-            "- **twoseedling**: ~4–6 folhas (duas mudas juntas)\n"
-            "- **weak**: 1–2 folhas (crescimento reduzido)\n"
-            "- **askew**: 2–3 folhas (normal, mas inclinada)\n\n"
-            "Para contagem mais precisa, você pode treinar o Modelo 2 (LeafRegressor) com anotações manuais — "
-            "veja a seção correspondente no Notebook Colab do projeto."
-        )
-
-    # ── YOLO / modelo ─────────────────────────────────────────────────────────
-    if _has_keyword(msg, ["yolo", "modelo", "treino", "treinamento", "detecção", "deteccao", "ia", "inteligência", "rede neural"]):
-        return (
-            "🤖 **Sobre o modelo de detecção:**\n\n"
-            "O sistema usa **YOLO11s** treinado no dataset de mudas do Roboflow com 768 imagens e 6 classes:\n\n"
-            "| Classe | Significado |\n"
-            "|---|---|\n"
-            "| `seedling` | Muda saudável ✅ |\n"
-            "| `twoseedling` | Duas mudas na mesma cavidade |\n"
-            "| `weak` | Muda fraca ⚠️ |\n"
-            "| `noseedling` | Sem germinação ❌ |\n"
-            "| `processed` | Cavidade processada |\n"
-            "| `askew` | Muda inclinada |\n\n"
-            "A confiança mínima padrão é 25% — aumente para menos detecções mas mais precisas."
-        )
-
-    # ── Dica geral ────────────────────────────────────────────────────────────
-    if _has_keyword(msg, ["dica", "dicas", "conselho", "como", "ajuda", "help", "problema", "erro"]):
-        import random
-        dica = random.choice(DICAS_GERMINACAO)
-        return f"🌿 **Dica de cultivo:**\n\n{dica}\n\nQuer mais dicas? É só perguntar!"
-
-    # ── Histórico / série temporal ────────────────────────────────────────────
-    if _has_keyword(msg, ["histórico", "historico", "análises", "analises", "registros", "dias", "evolução", "evolucao"]):
-        if ctx["total"] == 0:
-            return "Você ainda não tem análises no histórico. Faça o upload de imagens e use o campo **Rótulo do dia** (D0, D1, D2...) para montar a série temporal!"
-        return (
-            f"📅 **Seu histórico:**\n\n"
-            f"- {ctx['total']} análise(s) registrada(s)\n"
-            f"- {ctx.get('days_tracked', 0)} dia(s) distintos monitorados\n"
-            f"- Taxa média de germinação: {ctx['avg_germ']}%\n\n"
-            f"Use o campo **Rótulo do dia** ao fazer upload (ex: D0, D1, D3) para o gráfico temporal aparecer no dashboard!"
-        )
-
-    # ── Sobre o projeto ───────────────────────────────────────────────────────
-    if _has_keyword(msg, ["projeto", "sistema", "app", "aplicação", "aplicacao", "flask", "python"]):
-        return (
-            "🌱 **Sobre o GerminaVision:**\n\n"
-            "Sistema de visão computacional para monitoramento automático de germinação e crescimento de mudas.\n\n"
-            "**Stack:**\n"
-            "- 🐍 Python + Flask (backend)\n"
-            "- 🤖 YOLO11s (detecção de mudas)\n"
-            "- 🗄️ SQLite (histórico temporal)\n"
-            "- 📊 Chart.js (gráficos)\n\n"
-            "**Funcionalidades:**\n"
-            "- Upload de imagens com detecção automática\n"
-            "- Estimativa de contagem de folhas\n"
-            "- Taxa de germinação por imagem\n"
-            "- Dashboard temporal de evolução\n"
-            "- Este chatbot 🤖"
-        )
-
-    # ── Resposta padrão ───────────────────────────────────────────────────────
-    sugestoes = [
-        "o que significa a classe `weak`",
-        "minha taxa de germinação",
-        "dicas de cultivo",
-        "como funciona o modelo YOLO",
-        "meu histórico de análises",
-    ]
-    import random
-    sug = random.choice(sugestoes)
-    return (
-        f"Hmm, não tenho certeza sobre isso ainda. 🤔\n\n"
-        f"Posso te ajudar com tópicos como:\n"
-        f"- Classes detectadas (seedling, weak, noseedling...)\n"
-        f"- Taxa de germinação e estatísticas\n"
-        f"- Dicas de cultivo\n"
-        f"- Como o modelo funciona\n\n"
-        f"Tente perguntar algo como: *\"{sug}\"*"
+    system_prompt = (
+        "Você é o GerminaBot, um assistente agrícola inteligente do projeto GerminaVision.\n"
+        "O GerminaVision usa Visão Computacional (YOLO11) para detectar germinação de sementes e estimar a contagem de folhas.\n"
+        "Seja cordial, use emojis, e dê respostas diretas baseadas nas estatísticas reais do usuário fornecidas abaixo.\n\n"
+        "--- ESTATÍSTICAS ATUAIS DO USUÁRIO ---\n"
+        f"- Total de imagens analisadas: {ctx.get('total', 0)}\n"
+        f"- Taxa média de germinação: {ctx.get('avg_germ', 0)}%\n"
+        f"- Média de folhas por muda: {ctx.get('avg_leaf', 0)}\n"
+        f"- Última taxa de germinação: {ctx.get('last_germ', 'N/A')}%\n"
+        f"- Dias rastreados na evolução temporal: {ctx.get('days_tracked', 0)}\n"
+        "----------------------------------------\n\n"
+        "Regras para perguntas sobre viabilidade/produção:\n"
+        "- >= 80% germinação: Excelente, retorno comercial garantido.\n"
+        "- 60% a 79%: Moderado. Viável, mas com perda de eficiência nos espaços vazios da bandeja.\n"
+        "- Abaixo de 60%: Risco de prejuízo. A mão de obra supera o lucro.\n\n"
+        "Use formatação Markdown amigável."
     )
+
+    url = "https://api.openai.com/v1/chat/completions"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
+    data = {
+        "model": "gpt-4o-mini",
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": mensagem}
+        ],
+        "temperature": 0.7,
+        "max_tokens": 500
+    }
+
+    req = urllib.request.Request(url, data=json.dumps(data).encode("utf-8"), headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as response:
+            result = json.loads(response.read().decode("utf-8"))
+            return result["choices"][0]["message"]["content"]
+    except urllib.error.URLError as e:
+        return f"🚨 Erro de conexão com a API da OpenAI: {e}"
+    except Exception as e:
+        return f"🚨 Erro interno no bot: {e}"

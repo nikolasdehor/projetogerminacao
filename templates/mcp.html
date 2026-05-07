@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GerminaVision — Integração MCP</title>
+  <meta name="description" content="Guia de como integrar o servidor MCP do GerminaVision na sua IDE ou Claude Desktop." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/css/style.css?v={{ v }}" />
+  <style>
+    .mcp-container {
+      max-width: 900px;
+      margin: 80px auto;
+      padding: 0 20px;
+      color: #a3b8a8;
+    }
+    .mcp-header {
+      margin-bottom: 40px;
+    }
+    .mcp-title {
+      font-size: 2.5rem;
+      color: #f0fdf4;
+      margin-bottom: 15px;
+    }
+    .mcp-card {
+      background: #172019;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      padding: 30px;
+      margin-bottom: 30px;
+    }
+    .mcp-card h3 {
+      color: #f0fdf4;
+      margin-top: 0;
+      margin-bottom: 15px;
+      font-size: 1.5rem;
+    }
+    .mcp-code {
+      background: #0f1511;
+      padding: 15px;
+      border-radius: 8px;
+      font-family: 'JetBrains Mono', monospace;
+      color: #34d399;
+      overflow-x: auto;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+    .mcp-step {
+      margin-bottom: 25px;
+    }
+    .mcp-step-title {
+      font-weight: 600;
+      color: #f0fdf4;
+      margin-bottom: 10px;
+    }
+    .back-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: #34d399;
+      text-decoration: none;
+      font-weight: 500;
+      margin-bottom: 30px;
+    }
+    .back-btn:hover {
+      text-decoration: underline;
+    }
+    .tool-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 15px;
+      margin-top: 20px;
+    }
+    .tool-card {
+      background: #0f1511;
+      padding: 15px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+    .tool-card h4 {
+      color: #22d3ee;
+      margin: 0 0 10px 0;
+    }
+  </style>
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="nav-inner">
+    <div class="nav-brand">
+      <span class="nav-icon">🌱</span>
+      <span class="nav-title">GerminaVision</span>
+    </div>
+    <div class="nav-center">
+      <a href="/" class="nav-link">← Voltar ao Dashboard</a>
+    </div>
+  </div>
+</nav>
+
+<div class="mcp-container">
+  <a href="/" class="back-btn">← Voltar ao Dashboard</a>
+  
+  <div class="mcp-header">
+    <h1 class="mcp-title">Integração MCP <span class="hero-badge">Model Context Protocol</span></h1>
+    <p>Conecte o GerminaVision à sua IA favorita (Claude, Cursor, Cline) para que ela possa visualizar e analisar suas mudas automaticamente.</p>
+  </div>
+
+  <div class="mcp-card">
+    <h3>1. Configuração no Claude Desktop</h3>
+    <div class="mcp-step">
+      <div class="mcp-step-title">No Mac:</div>
+      <p>Abra o arquivo de configuração localizado em:</p>
+      <div class="mcp-code">~/Library/Application Support/Claude/claude_desktop_config.json</div>
+    </div>
+    <div class="mcp-step">
+      <div class="mcp-step-title">No Windows:</div>
+      <p>Abra o arquivo de configuração localizado em:</p>
+      <div class="mcp-code">%APPDATA%\Claude\claude_desktop_config.json</div>
+    </div>
+    <div class="mcp-step">
+      <div class="mcp-step-title">Adicione o servidor:</div>
+      <p>Cole o seguinte código JSON, substituindo <code>/caminho/absoluto/projetogerminação</code> pelo caminho real da pasta do projeto na sua máquina:</p>
+      <pre class="mcp-code">
+{
+  "mcpServers": {
+    "germinavision": {
+      "command": "python",
+      "args": [
+        "/caminho/absoluto/projetogerminação/mcp_server.py"
+      ]
+    }
+  }
+}</pre>
+    </div>
+    <p><em>Após salvar, reinicie o Claude Desktop. O ícone 🔌 (plugue) aparecerá indicando que as ferramentas foram carregadas.</em></p>
+  </div>
+
+  <div class="mcp-card">
+    <h3>2. Configuração no Cursor IDE</h3>
+    <div class="mcp-step">
+      <p>O Cursor tem suporte nativo para MCP. Para adicionar o GerminaVision:</p>
+      <ol>
+        <li style="margin-bottom: 8px;">Abra as configurações do Cursor (<code>Cmd + Shift + J</code> ou vá em <strong>Cursor Settings &gt; Features &gt; MCP</strong>).</li>
+        <li style="margin-bottom: 8px;">Clique em <strong>+ Add New MCP Server</strong>.</li>
+        <li style="margin-bottom: 8px;">Tipo: <code>command</code></li>
+        <li style="margin-bottom: 8px;">Comando: <code>python /caminho/absoluto/projetogerminação/mcp_server.py</code></li>
+      </ol>
+    </div>
+  </div>
+
+  <div class="mcp-card">
+    <h3>Ferramentas Disponíveis para a IA</h3>
+    <p>Uma vez integrado, a IA poderá usar as seguintes ferramentas autonomamente para responder suas dúvidas e analisar fotos:</p>
+    
+    <div class="tool-grid">
+      <div class="tool-card">
+        <h4>🔍 analyze_image</h4>
+        <p>A IA pode rodar o modelo YOLO11 em uma nova foto e salvar o resultado anotado, retornando as estatísticas na hora.</p>
+      </div>
+      <div class="tool-card">
+        <h4>📈 get_temporal</h4>
+        <p>Retorna toda a evolução temporal da sua plantação agregada por dias (D0, D1, D2).</p>
+      </div>
+      <div class="tool-card">
+        <h4>🗂 get_history</h4>
+        <p>Lê as últimas análises do banco de dados (histórico bruto).</p>
+      </div>
+      <div class="tool-card">
+        <h4>📊 get_stats</h4>
+        <p>Puxa o resumo geral (taxa média, número total de mudas detectadas, folhas).</p>
+      </div>
+      <div class="tool-card">
+        <h4>💬 ask</h4>
+        <p>Chama o GerminaBot nativamente para consultar regras internas ou dicas de plantio.</p>
+      </div>
+      <div class="tool-card">
+        <h4>🟢 status</h4>
+        <p>Verifica a saúde do servidor MCP, caminho do modelo e do banco de dados.</p>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>

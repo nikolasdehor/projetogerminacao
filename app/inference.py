@@ -92,10 +92,11 @@ def run_inference(
     # Nomes das classes (usa do modelo se não passado)
     names = class_names or result.names  # dict {id: name}
 
-    # Lê imagem original em BGR
-    img_bgr = cv2.imread(str(img_path))
+    # Lê imagem original em BGR suportando caminhos unicode nativamente
+    img_array = np.fromfile(str(img_path), dtype=np.uint8)
+    img_bgr = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
     if img_bgr is None:
-        # Fallback via PIL
+        # Fallback via PIL caso o OpenCV falhe em decodificar a imagem
         pil = Image.open(img_path).convert("RGB")
         img_bgr = cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
 
@@ -128,16 +129,20 @@ def run_inference(
         color = CLASS_COLORS.get(cls_name, DEFAULT_COLOR)
         color_bgr = (color[2], color[1], color[0])
 
+        # Escala dinâmica do texto baseada no tamanho da imagem
+        scale = max(0.4, min(w, h) / 1200)
+        thickness = max(1, int(scale * 2))
+
         # Desenha bbox
-        cv2.rectangle(img_annotated, (x1, y1), (x2, y2), color_bgr, 2)
+        cv2.rectangle(img_annotated, (x1, y1), (x2, y2), color_bgr, thickness)
 
         # Label com fundo
         label = f"{cls_name} {conf:.0%} | {leaf_n} folhas"
-        (lw, lh), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+        (lw, lh), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, scale, thickness)
         ly = max(y1 - 6, lh + 4)
         cv2.rectangle(img_annotated, (x1, ly - lh - 4), (x1 + lw + 4, ly + baseline), color_bgr, -1)
         cv2.putText(img_annotated, label, (x1 + 2, ly - 2),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+                    cv2.FONT_HERSHEY_SIMPLEX, scale, (255, 255, 255), thickness, cv2.LINE_AA)
 
         detections.append({
             "class":      cls_name,
@@ -148,7 +153,7 @@ def run_inference(
         })
 
     # Salva imagem anotada
-    result_name = f"result_{uuid.uuid4().hex[:8]}.jpg"
+    result_name = f"result_{uuid.uuid4().hex[:16]}.jpg"
     result_path = Path(result_folder) / result_name
     cv2.imwrite(str(result_path), img_annotated)
 

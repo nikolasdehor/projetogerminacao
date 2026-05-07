@@ -260,8 +260,12 @@ function renderDistChart(distribution) {
   const values = distribution.map(d => d.qtd);
   const colors = labels.map(l => COLORS[l] || '#94a3b8');
 
+  const canvas = $('distChart');
   if (distChart) distChart.destroy();
-  distChart = new Chart($('distChart').getContext('2d'), {
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  distChart = new Chart(ctx, {
     type: 'doughnut',
     data: { labels, datasets: [{ data: values, backgroundColor: colors.map(c => c + 'cc'), borderColor: colors, borderWidth: 2, hoverBorderWidth: 3 }] },
     options: {
@@ -301,8 +305,11 @@ function renderChart(data) {
 
   Chart.defaults.color = '#6b7f71';
   Chart.defaults.font.family = "'Inter', sans-serif";
-  const ctx = $('temporalChart').getContext('2d');
+  const canvas = $('temporalChart');
+  const ctx = canvas.getContext('2d');
   if (temporalChart) temporalChart.destroy();
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
   temporalChart = new Chart(ctx, {
     type: 'line',
     data: {

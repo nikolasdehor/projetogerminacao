@@ -6,3 +6,4 @@ opencv-python-headless>=4.10
 Pillow>=10.4
 numpy>=1.26
 mcp>=1.0
+openai>=1.0.0\npython-dotenv>=1.0.0

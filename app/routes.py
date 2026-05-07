@@ -12,6 +12,8 @@ from flask import (
 # pyrefly: ignore [missing-import]
 from werkzeug.utils import secure_filename
 
+import sqlite3
+
 from app.database import (
     delete_analysis, get_history, get_temporal_series, insert_analysis
 )
@@ -31,6 +33,11 @@ def _allowed(filename: str) -> bool:
 @bp.route("/")
 def index():
     return render_template("index.html", v=int(_time.time()))
+
+
+@bp.route("/mcp")
+def mcp_docs():
+    return render_template("mcp.html", v=int(_time.time()))
 
 
 @bp.route("/favicon.ico")
@@ -72,9 +79,15 @@ def analyze():
     day_label = request.form.get("day_label", "").strip() or None
 
     # Salva upload
-    filename  = f"{uuid.uuid4().hex[:8]}_{secure_filename(file.filename)}"
+    safe_name = secure_filename(file.filename)
+    if not safe_name:  # se o nome original tinha só acentos, fica vazio
+        safe_name = "imagem.jpg"
+    filename  = f"{uuid.uuid4().hex[:12]}_{safe_name}"
     save_path = Path(current_app.config["UPLOAD_FOLDER"]) / filename
-    file.save(str(save_path))
+    try:
+        file.save(str(save_path))
+    except Exception as exc:
+        return jsonify({"error": f"Erro ao salvar arquivo: {exc}"}), 500
 
     # Inferência
     try:
@@ -88,16 +101,19 @@ def analyze():
         return jsonify({"error": f"Erro na inferência: {exc}"}), 500
 
     # Persiste no histórico
-    record_id = insert_analysis(
-        db_path=current_app.config["DB_PATH"],
-        filename=file.filename,
-        total_detected=result["total_detected"],
-        germinated=result["germinated"],
-        germination_rate=result["germination_rate"],
-        leaf_avg=result["leaf_avg"],
-        result_image=result["result_image"],
-        day_label=day_label,
-    )
+    try:
+        record_id = insert_analysis(
+            db_path=current_app.config["DB_PATH"],
+            filename=file.filename,
+            total_detected=result["total_detected"],
+            germinated=result["germinated"],
+            germination_rate=result["germination_rate"],
+            leaf_avg=result["leaf_avg"],
+            result_image=result["result_image"],
+            day_label=day_label,
+        )
+    except Exception as exc:
+        return jsonify({"error": f"Erro ao gravar no banco: {exc}"}), 500
 
     result["id"]        = record_id
     result["filename"]  = file.filename
@@ -134,7 +150,6 @@ def temporal():
 
 @bp.route("/api/stats")
 def stats():
-    import sqlite3
     db = current_app.config["DB_PATH"]
     try:
         with sqlite3.connect(db) as conn:
