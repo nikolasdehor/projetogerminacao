@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://images.unsplash.com/photo-1592982537447-6f296c0b31b3?auto=format&fit=crop&q=80&w=1200&h=350" alt="GerminaVision Banner" style="border-radius: 12px;">
+  <img src="./static/banner.svg" alt="GerminaVision Banner" width="100%">
 
   # 🌱 GerminaVision
   
