@@ -9,3 +9,5 @@ data/germination.db
 models/best.pt
 *.pt
 .env*
+runs/
+seedling.v1i.yolov8/
