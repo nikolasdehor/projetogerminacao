@@ -105,20 +105,20 @@ def gerar_resposta(mensagem: str, db_path: str) -> str:
     try:
         with open(".env") as f:
             for line in f:
-                if line.startswith("OPENAI_API_KEY="):
-                    os.environ["OPENAI_API_KEY"] = line.strip().split("=", 1)[1]
+                if line.startswith("OPENROUTER_API_KEY="):
+                    os.environ["OPENROUTER_API_KEY"] = line.strip().split("=", 1)[1]
     except Exception:
         pass
 
-    api_key = os.environ.get("OPENAI_API_KEY")
+    api_key = os.environ.get("OPENROUTER_API_KEY")
     
-    if not api_key or api_key == "your_openai_api_key_here":
+    if not api_key or api_key == "your_openrouter_api_key_here":
         return (
             "⚠️ **Inteligência Artificial Pausada**\n\n"
-            "O GerminaBot agora usa IA Generativa real! Para funcionar, você precisa configurar a sua **API Key da OpenAI**.\n\n"
+            "O GerminaBot está configurado para usar a IA gratuita via OpenRouter!\n\n"
             "Abra o arquivo `.env` na pasta do projeto e adicione a sua chave:\n"
-            "`OPENAI_API_KEY=sk-...`\n\n"
-            "👉 *Dica: você também pode conferir a aba **MCP API** no menu para integrar seu projeto com o Claude Desktop ou Cursor!*"
+            "`OPENROUTER_API_KEY=sk-or-v1-...`\n\n"
+            "👉 *Você pode criar uma chave gratuita em openrouter.ai*"
         )
 
     system_prompt = (
@@ -139,13 +139,15 @@ def gerar_resposta(mensagem: str, db_path: str) -> str:
         "Use formatação Markdown amigável."
     )
 
-    url = "https://api.openai.com/v1/chat/completions"
+    url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
+        "Authorization": f"Bearer {api_key}",
+        "HTTP-Referer": "http://localhost:5001",
+        "X-Title": "GerminaVision"
     }
     data = {
-        "model": "gpt-4o-mini",
+        "model": "meta-llama/llama-3.1-8b-instruct:free",
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": mensagem}
@@ -160,6 +162,6 @@ def gerar_resposta(mensagem: str, db_path: str) -> str:
             result = json.loads(response.read().decode("utf-8"))
             return result["choices"][0]["message"]["content"]
     except urllib.error.URLError as e:
-        return f"🚨 Erro de conexão com a API da OpenAI: {e}"
+        return f"🚨 Erro de conexão com a API do OpenRouter: {e}"
     except Exception as e:
         return f"🚨 Erro interno no bot: {e}"
