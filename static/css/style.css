@@ -182,7 +182,7 @@ button { cursor: pointer; font-family: inherit; }
 .chat-unread { position: absolute; top: -4px; right: -4px; width: 18px; height: 18px; background: #ef4444; border-radius: 50%; font-size: 0.65rem; font-weight: 700; display: flex; align-items: center; justify-content: center; color: #fff; border: 2px solid var(--bg); }
 
 /* ── Chat Panel ── */
-.chat-panel { position: fixed; bottom: 5.5rem; right: 2rem; z-index: 200; width: 360px; max-height: 560px; background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: 0 8px 48px rgba(0,0,0,0.6); display: flex; flex-direction: column; overflow: hidden; animation: slideUp 0.25s ease; }
+.chat-panel { position: fixed; bottom: 5.5rem; right: 2rem; z-index: 200; width: 450px; height: 650px; max-height: 75vh; background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: 0 8px 48px rgba(0,0,0,0.6); display: flex; flex-direction: column; overflow: hidden; animation: slideUp 0.25s ease; }
 @media (max-width: 480px) { .chat-panel { width: calc(100vw - 2rem); right: 1rem; } }
 @keyframes slideUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
 .chat-header { background: linear-gradient(135deg, rgba(16,185,129,0.2), rgba(45,212,191,0.1)); border-bottom: 1px solid var(--border); padding: 1rem 1.25rem; display: flex; align-items: center; justify-content: space-between; }
@@ -242,3 +242,4 @@ button { cursor: pointer; font-family: inherit; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
 .fade-in { animation: fadeIn 0.4s ease forwards; }
 \n.chat-bubble h1, .chat-bubble h2, .chat-bubble h3 { font-size: 1.05rem; margin: 0.5rem 0; color: var(--green-300); }\n.chat-bubble p { margin-bottom: 0.5rem; }\n.chat-bubble ul, .chat-bubble ol { margin-left: 1.2rem; margin-bottom: 0.5rem; }\n.chat-bubble li { margin-bottom: 0.2rem; }
+\n.chat-bubble { overflow-x: auto; }
