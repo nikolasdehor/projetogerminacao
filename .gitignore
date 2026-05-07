@@ -8,3 +8,4 @@ static/results/
 data/germination.db
 models/best.pt
 *.pt
+.env*

@@ -147,7 +147,7 @@ def gerar_resposta(mensagem: str, db_path: str) -> str:
         "X-Title": "GerminaVision"
     }
     data = {
-        "model": "meta-llama/llama-3.1-8b-instruct:free",
+        "model": "openai/gpt-oss-120b:free",
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": mensagem}
