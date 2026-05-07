@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GerminaVision — Monitoramento de Mudas com IA</title>
+  <meta name="description" content="Sistema de visão computacional para monitoramento automático de germinação e crescimento de mudas usando YOLO11." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/css/style.css?v={{ v }}" />
+</head>
+<body>
+
+<!-- ═══ NAVBAR ═══════════════════════════════════════════════════════════════ -->
+<nav class="navbar">
+  <div class="nav-inner">
+    <div class="nav-brand">
+      <span class="nav-icon">🌱</span>
+      <span class="nav-title">GerminaVision</span>
+    </div>
+    <div class="nav-center">
+      <a href="#upload-section" class="nav-link">Analisar</a>
+      <a href="#temporal-section" class="nav-link">Evolução</a>
+      <a href="#history-section" class="nav-link">Histórico</a>
+    </div>
+    <div class="nav-status">
+      <span class="status-dot" id="statusDot"></span>
+      <span id="statusText">Verificando…</span>
+    </div>
+  </div>
+</nav>
+
+<!-- ═══ HERO ══════════════════════════════════════════════════════════════════ -->
+<header class="hero">
+  <div class="hero-bg"></div>
+  <div class="hero-content">
+    <div class="hero-badge">Visão Computacional · YOLO11 · PyTorch</div>
+    <h1 class="hero-title">Monitoramento de<br><span class="gradient-text">Germinação</span> com IA</h1>
+    <p class="hero-sub">Detecte mudas automaticamente, estime o número de folhas e acompanhe a evolução temporal do seu cultivo.</p>
+    <div class="hero-stats">
+      <div class="hero-stat"><span class="stat-n" id="statTotal">—</span><span class="stat-l">Análises</span></div>
+      <div class="hero-stat"><span class="stat-n" id="statGermRate">—</span><span class="stat-l">Taxa Média</span></div>
+      <div class="hero-stat"><span class="stat-n" id="statLeafAvg">—</span><span class="stat-l">Folhas/Muda</span></div>
+    </div>
+  </div>
+</header>
+
+<!-- ═══ MAIN ══════════════════════════════════════════════════════════════════ -->
+<main class="container">
+
+  <!-- ── Upload ─────────────────────────────────────────────────────────── -->
+  <section class="section" id="upload-section">
+    <div class="upload-row">
+
+      <!-- Upload Card -->
+      <div class="card upload-card">
+        <h2 class="card-title">📤 Analisar Imagem</h2>
+
+        <div class="drop-zone" id="dropZone" tabindex="0" role="button"
+             aria-label="Área de upload — arraste uma imagem ou clique">
+          <div class="drop-icon">🌿</div>
+          <p class="drop-text">Arraste uma imagem aqui</p>
+          <p class="drop-sub">ou <span class="link">clique para selecionar</span></p>
+          <p class="drop-formats">PNG · JPG · WEBP · BMP</p>
+          <input type="file" id="fileInput" accept=".png,.jpg,.jpeg,.webp,.bmp" hidden />
+        </div>
+
+        <div class="preview-wrap" id="previewWrap" hidden>
+          <img id="previewImg" class="preview-img" alt="Preview" />
+          <button class="btn-ghost btn-sm preview-remove" id="clearImg" type="button">✕ Remover</button>
+        </div>
+
+        <div class="upload-options">
+          <label class="opt-label" for="dayLabel">Rótulo do dia <span class="opt-hint">(ex: D0, D1, D3 — para gráfico temporal)</span></label>
+          <input class="opt-input" type="text" id="dayLabel" placeholder="Opcional" maxlength="20" />
+
+          <label class="opt-label" for="confSlider">
+            Confiança mínima: <strong id="confValue">25%</strong>
+          </label>
+          <input class="slider" type="range" id="confSlider" min="10" max="90" value="25" step="5" />
+        </div>
+
+        <button class="btn-primary" id="analyzeBtn" type="button" disabled>
+          <span class="btn-icon">🔍</span> Analisar Imagem
+        </button>
+
+        <div class="progress-wrap" id="progressWrap" hidden>
+          <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+          <p class="progress-label" id="progressLabel">Processando…</p>
+        </div>
+      </div>
+
+      <!-- Quick metrics (aparece após análise) -->
+      <div class="card metrics-side" id="metricsSide" hidden>
+        <h2 class="card-title">📊 Métricas</h2>
+        <div class="big-metrics">
+          <div class="big-metric">
+            <span class="big-val" id="mRate">0%</span>
+            <span class="big-lbl">Taxa de Germinação</span>
+            <div class="big-bar"><div class="big-bar-fill" id="mRateBar"></div></div>
+          </div>
+          <div class="metrics-row">
+            <div class="mini-metric">
+              <span class="mini-val" id="mTotal">0</span>
+              <span class="mini-lbl">Detectadas</span>
+            </div>
+            <div class="mini-metric">
+              <span class="mini-val" id="mGerminated">0</span>
+              <span class="mini-lbl">Germinadas</span>
+            </div>
+            <div class="mini-metric">
+              <span class="mini-val" id="mLeaf">0</span>
+              <span class="mini-lbl">Folhas/muda</span>
+            </div>
+          </div>
+          <p class="inference-time" id="inferenceTime"></p>
+        </div>
+
+        <!-- Detection list -->
+        <div class="det-section">
+          <p class="det-title">Detecções</p>
+          <div class="detection-list" id="detectionList"></div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ── Resultado Full-Width ───────────────────────────────────────────── -->
+  <section class="section result-section" id="resultSection" hidden>
+    <div class="card result-full-card">
+      <div class="card-header">
+        <h2 class="card-title">🔬 Imagem Anotada</h2>
+        <a id="resultDownload" class="btn-ghost btn-sm" download="resultado.jpg">⬇ Baixar</a>
+      </div>
+      <div class="result-img-wrap">
+        <img id="resultImg" class="result-img-full" alt="Detecções anotadas pelo YOLO11" />
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Dashboard Temporal ─────────────────────────────────────────────── -->
+  <section class="section" id="temporal-section">
+
+    <!-- Resumo geral sempre visível -->
+    <div class="summary-grid" id="summaryGrid">
+      <div class="sum-card">
+        <span class="sum-val" id="sumTotal">—</span>
+        <span class="sum-lbl">Análises</span>
+      </div>
+      <div class="sum-card">
+        <span class="sum-val" id="sumAvg">—</span>
+        <span class="sum-lbl">Taxa Média</span>
+      </div>
+      <div class="sum-card sum-card--best">
+        <span class="sum-val" id="sumBest">—</span>
+        <span class="sum-lbl">Melhor Taxa</span>
+      </div>
+      <div class="sum-card">
+        <span class="sum-val" id="sumDetected">—</span>
+        <span class="sum-lbl">Mudas Detectadas</span>
+      </div>
+      <div class="sum-card">
+        <span class="sum-val" id="sumLeaves">—</span>
+        <span class="sum-lbl">Folhas Médias</span>
+      </div>
+      <div class="sum-card">
+        <span class="sum-val" id="sumDays">—</span>
+        <span class="sum-lbl">Dias Rastreados</span>
+      </div>
+    </div>
+
+    <div class="charts-row">
+      <!-- Gráfico temporal -->
+      <div class="card chart-card flex-grow">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">📈 Evolução Temporal</h2>
+            <p class="card-sub" id="chartSubtitle">Use o campo "Rótulo do dia" ao fazer upload (D0, D1, D2…) para ver a evolução</p>
+          </div>
+          <button class="btn-ghost btn-sm" id="refreshChart" type="button">↻ Atualizar</button>
+        </div>
+        <div class="chart-wrap">
+          <canvas id="temporalChart"></canvas>
+          <div class="chart-empty" id="chartEmpty" hidden>
+            <div class="chart-empty-inner">
+              <div class="chart-empty-icon">📅</div>
+              <p class="chart-empty-title">Série temporal vazia</p>
+              <p class="chart-empty-desc">Faça uploads em dias diferentes usando o campo <strong>Rótulo do dia</strong> (D0, D1, D2…) para ver a evolução da germinação ao longo do experimento.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Distribuição de qualidade -->
+      <div class="card dist-card">
+        <h2 class="card-title">🎯 Distribuição de Qualidade</h2>
+        <div class="chart-wrap donut-wrap">
+          <canvas id="distChart"></canvas>
+          <div class="chart-empty" id="distEmpty" hidden>
+            <div class="chart-empty-inner">
+              <div class="chart-empty-icon">🌱</div>
+              <p class="chart-empty-desc">Faça análises para ver a distribuição</p>
+            </div>
+          </div>
+        </div>
+        <div class="dist-legend" id="distLegend"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Histórico ──────────────────────────────────────────────────────── -->
+  <section class="section" id="history-section">
+    <div class="card">
+      <div class="card-header">
+        <h2 class="card-title">🗂 Histórico de Análises</h2>
+        <span class="badge" id="historyCount">0 registros</span>
+      </div>
+      <div class="table-wrap">
+        <table class="history-table">
+          <thead>
+            <tr>
+              <th>#</th><th>Data / Hora</th><th>Arquivo</th><th>Dia</th>
+              <th>Detectadas</th><th>Germinadas</th><th>Taxa</th><th>Folhas</th><th>Resultado</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="historyBody">
+            <tr class="empty-row"><td colspan="10">Nenhuma análise ainda. Faça o primeiro upload! 🌱</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- ═══ FOOTER ════════════════════════════════════════════════════════════════ -->
+<footer class="footer">
+  <p>GerminaVision · Sistema de Visão Computacional para Monitoramento de Germinação</p>
+  <p class="footer-sub">Flask · YOLO11 · PyTorch</p>
+</footer>
+
+<!-- ═══ CHATBOT ═══════════════════════════════════════════════════════════════ -->
+<div class="chat-fab" id="chatFab" title="GerminaBot — Assistente de Germinação">
+  <span class="chat-fab-icon" id="chatFabIcon">💬</span>
+  <span class="chat-unread" id="chatUnread" hidden>1</span>
+</div>
+
+<div class="chat-panel" id="chatPanel" hidden>
+  <div class="chat-header">
+    <div class="chat-header-info">
+      <span class="chat-avatar">🌱</span>
+      <div>
+        <p class="chat-name">GerminaBot</p>
+        <p class="chat-status">Especialista em germinação</p>
+      </div>
+    </div>
+    <button class="chat-close" id="chatClose" aria-label="Fechar chat">✕</button>
+  </div>
+
+  <div class="chat-messages" id="chatMessages">
+    <div class="chat-msg bot">
+      <div class="chat-bubble">
+        Olá! 🌱 Sou o <strong>GerminaBot</strong>. Pergunte sobre classes detectadas, taxa de germinação, dicas de cultivo ou como funciona o sistema!
+      </div>
+      <span class="chat-time">agora</span>
+    </div>
+  </div>
+
+  <div class="chat-suggestions" id="chatSuggestions">
+    <button class="chip" data-msg="O que significa a classe weak?">muda fraca?</button>
+    <button class="chip" data-msg="Qual minha taxa de germinação?">minha taxa</button>
+    <button class="chip" data-msg="Dicas de cultivo">dicas cultivo</button>
+    <button class="chip" data-msg="Como funciona o modelo YOLO?">como funciona</button>
+  </div>
+
+  <div class="chat-input-row">
+    <input class="chat-input" id="chatInput" type="text"
+           placeholder="Pergunte sobre germinação…" maxlength="300" autocomplete="off" />
+    <button class="chat-send" id="chatSend" type="button" aria-label="Enviar">➤</button>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast" role="alert" aria-live="assertive"></div>
+
+<!-- Lightbox -->
+<div class="lightbox" id="lightbox" hidden>
+  <button class="lightbox-close" id="lightboxClose">✕</button>
+  <img class="lightbox-img" id="lightboxImg" alt="Imagem anotada ampliada" />
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script src="/static/js/app.js?v={{ v }}"></script>
+</body>
+</html>

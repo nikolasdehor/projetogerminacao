@@ -1,0 +1,17 @@
+train: "/Users/nikolas/projetogerminac\u0327a\u0303o/seedling.v1i.yolov8/train/images"
+val: "/Users/nikolas/projetogerminac\u0327a\u0303o/seedling.v1i.yolov8/valid/images"
+test: "/Users/nikolas/projetogerminac\u0327a\u0303o/seedling.v1i.yolov8/test/images"
+nc: 6
+names:
+- askew
+- noseedling
+- processed
+- seedling
+- twoseedling
+- weak
+roboflow:
+  workspace: eshu-broccoli
+  project: seedling-f9rmf
+  version: 1
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/eshu-broccoli/seedling-f9rmf/dataset/1
