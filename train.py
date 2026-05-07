@@ -61,8 +61,8 @@ model = YOLO("yolo11s.pt")
 print("🚀  Iniciando treino…")
 results = model.train(
     data=str(FIXED_YAML),
-    epochs=50,
-    imgsz=512,
+    epochs=100,
+    imgsz=640,
     batch=8,           # reduzido para Mac Air (RAM limitada)
     patience=15,
     device=DEVICE,
