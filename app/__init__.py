@@ -1,10 +1,17 @@
 """Flask application factory."""
 import os
 from pathlib import Path
+# pyrefly: ignore [missing-import]
 from flask import Flask
 
 
 def create_app() -> Flask:
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except ImportError:
+        pass
+
     app = Flask(
         __name__,
         template_folder=str(Path(__file__).parent.parent / "templates"),
@@ -33,5 +40,9 @@ def create_app() -> Flask:
     # ── Rotas ─────────────────────────────────────────────────────────────────
     from app.routes import bp
     app.register_blueprint(bp)
+
+    # ── Rotas WhatsApp ────────────────────────────────────────────────────────
+    from app.whatsapp_routes import wp
+    app.register_blueprint(wp)
 
     return app

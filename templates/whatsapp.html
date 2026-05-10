@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GerminaVision — Conectar WhatsApp</title>
+  <meta name="description" content="Configure seu agente GerminaVision no WhatsApp para análise de germinação diretamente pelo celular." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/css/style.css?v={{ v }}" />
+  <style>
+    /* ── WhatsApp Page Styles ── */
+    .wa-hero {
+      position: relative; overflow: hidden; padding: 3rem 2rem 2.5rem; text-align: center;
+    }
+    .wa-hero-bg {
+      position: absolute; inset: 0; z-index: 0;
+      background: radial-gradient(ellipse 70% 50% at 50% -10%, rgba(37, 211, 102, 0.14) 0%, transparent 70%),
+                  radial-gradient(ellipse 40% 40% at 80% 60%, rgba(52, 211, 153, 0.06) 0%, transparent 60%);
+    }
+    .wa-hero-content { position: relative; z-index: 1; max-width: 640px; margin: 0 auto; }
+    .wa-hero-badge {
+      display: inline-block; font-size: 0.75rem; font-weight: 600; letter-spacing: 0.08em;
+      text-transform: uppercase; color: #25d366; border: 1px solid rgba(37, 211, 102, 0.3);
+      border-radius: 100px; padding: 5px 14px; margin-bottom: 1.2rem; background: rgba(37, 211, 102, 0.06);
+    }
+    .wa-hero-title {
+      font-size: clamp(1.6rem, 4vw, 2.4rem); font-weight: 800; line-height: 1.15;
+      margin-bottom: 0.8rem; letter-spacing: -0.02em;
+    }
+    .wa-gradient {
+      background: linear-gradient(135deg, #25d366 0%, #34d399 50%, #2dd4bf 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    }
+    .wa-hero-sub { font-size: 0.95rem; color: var(--text-2); max-width: 500px; margin: 0 auto; }
+
+    /* Layout */
+    .wa-container { max-width: 900px; margin: 0 auto; padding: 0 1.5rem 4rem; }
+    .wa-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem; }
+    @media (max-width: 700px) { .wa-grid { grid-template-columns: 1fr; } }
+
+    /* Status Card */
+    .wa-status-card { text-align: center; }
+    .wa-status-icon { font-size: 3rem; margin-bottom: 0.75rem; }
+    .wa-status-label {
+      font-size: 0.9rem; font-weight: 600; margin-bottom: 0.3rem;
+    }
+    .wa-status-desc {
+      font-size: 0.82rem; color: var(--text-3); margin-bottom: 1.25rem;
+    }
+    .wa-status--open .wa-status-icon { animation: pulse 2s infinite; }
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.08); }
+    }
+
+    /* QR Code */
+    .wa-qr-wrap {
+      background: #fff; border-radius: var(--radius); padding: 1.5rem;
+      display: flex; align-items: center; justify-content: center; min-height: 260px;
+      margin-bottom: 1rem;
+    }
+    .wa-qr-wrap img {
+      max-width: 240px; max-height: 240px; image-rendering: pixelated;
+    }
+    .wa-qr-placeholder {
+      text-align: center; color: var(--text-3);
+    }
+    .wa-qr-placeholder-icon { font-size: 3rem; margin-bottom: 0.5rem; }
+
+    /* Config form */
+    .wa-form-group {
+      margin-bottom: 1rem;
+    }
+    .wa-form-label {
+      display: block; font-size: 0.82rem; font-weight: 500; color: var(--text-2);
+      margin-bottom: 0.35rem;
+    }
+    .wa-form-hint {
+      font-size: 0.72rem; color: var(--text-3); margin-top: 0.2rem;
+    }
+    .wa-input {
+      width: 100%; background: var(--bg-2); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); color: var(--text-1); padding: 0.6rem 0.8rem;
+      font-size: 0.88rem; font-family: var(--font-mono); outline: none;
+      transition: border-color var(--t);
+    }
+    .wa-input:focus { border-color: #25d366; }
+    .wa-input::placeholder { color: var(--text-3); font-family: var(--font-sans); }
+
+    /* Buttons */
+    .wa-btn {
+      width: 100%; padding: 0.8rem 1.5rem; border: none; border-radius: var(--radius-sm);
+      font-size: 0.9rem; font-weight: 600; display: flex; align-items: center;
+      justify-content: center; gap: 8px; transition: all var(--t); cursor: pointer;
+      font-family: inherit;
+    }
+    .wa-btn-connect {
+      background: linear-gradient(135deg, #25d366, #128c7e); color: #fff;
+      box-shadow: 0 4px 16px rgba(37, 211, 102, 0.3);
+    }
+    .wa-btn-connect:hover:not(:disabled) { opacity: 0.9; transform: translateY(-1px); }
+    .wa-btn-connect:disabled { opacity: 0.4; cursor: not-allowed; }
+    .wa-btn-disconnect {
+      background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2);
+      color: #fca5a5;
+    }
+    .wa-btn-disconnect:hover { background: rgba(239, 68, 68, 0.2); }
+
+    /* Feature cards */
+    .wa-features {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem; margin-top: 1.5rem;
+    }
+    .wa-feature {
+      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 1.25rem; text-align: center; transition: border-color var(--t), box-shadow var(--t);
+    }
+    .wa-feature:hover { border-color: var(--border-h); box-shadow: var(--glow); }
+    .wa-feature-icon { font-size: 1.8rem; margin-bottom: 0.5rem; }
+    .wa-feature-title { font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem; }
+    .wa-feature-desc { font-size: 0.78rem; color: var(--text-3); }
+
+    /* Steps */
+    .wa-steps { margin: 2rem 0; }
+    .wa-step {
+      display: flex; gap: 1rem; margin-bottom: 1.25rem; align-items: flex-start;
+    }
+    .wa-step-num {
+      width: 32px; height: 32px; flex-shrink: 0; border-radius: 50%;
+      background: linear-gradient(135deg, #25d366, #128c7e); color: #fff;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 0.8rem; font-weight: 700;
+    }
+    .wa-step-text { flex: 1; }
+    .wa-step-title { font-size: 0.9rem; font-weight: 600; margin-bottom: 0.15rem; }
+    .wa-step-desc { font-size: 0.82rem; color: var(--text-3); }
+
+    /* Alert banner */
+    .wa-alert {
+      background: rgba(251, 191, 36, 0.08); border: 1px solid rgba(251, 191, 36, 0.25);
+      border-radius: var(--radius-sm); padding: 0.8rem 1rem; margin-bottom: 1.5rem;
+      display: flex; align-items: flex-start; gap: 0.6rem; font-size: 0.82rem; color: var(--text-2);
+    }
+    .wa-alert-icon { font-size: 1rem; flex-shrink: 0; margin-top: 1px; }
+  </style>
+</head>
+<body>
+
+<!-- ═══ NAVBAR ═══ -->
+<nav class="navbar">
+  <div class="nav-inner">
+    <div class="nav-brand">
+      <span class="nav-icon">🌱</span>
+      <span class="nav-title">GerminaVision</span>
+    </div>
+    <div class="nav-center">
+      <a href="/" class="nav-link">Início</a>
+      <a href="/#upload-section" class="nav-link">Analisar</a>
+      <a href="/whatsapp" class="nav-link" style="color: #25d366; font-weight: 600;">📱 WhatsApp</a>
+      <a href="/mcp" class="nav-link" style="color: #34d399; font-weight: 600;">MCP API</a>
+    </div>
+    <div class="nav-status">
+      <span class="status-dot" id="statusDot"></span>
+      <span id="statusText">Verificando…</span>
+    </div>
+  </div>
+</nav>
+
+<!-- ═══ HERO ═══ -->
+<header class="wa-hero">
+  <div class="wa-hero-bg"></div>
+  <div class="wa-hero-content">
+    <div class="wa-hero-badge">Integração WhatsApp · Evolution API</div>
+    <h1 class="wa-hero-title">Seu Agente no <span class="wa-gradient">WhatsApp</span></h1>
+    <p class="wa-hero-sub">Configure aqui e depois analise suas bandejas diretamente pelo WhatsApp — mande uma foto e receba o resultado na hora.</p>
+  </div>
+</header>
+
+<!-- ═══ MAIN ═══ -->
+<main class="wa-container">
+
+  <!-- Alert para URL pública -->
+  <div class="wa-alert" id="publicUrlAlert">
+    <span class="wa-alert-icon">⚠️</span>
+    <div>
+      <strong>URL pública necessária:</strong> Para receber mensagens do WhatsApp, seu servidor precisa estar acessível pela internet (VPS, ngrok, Cloudflare Tunnel, etc.)
+    </div>
+  </div>
+
+  <div class="wa-grid">
+    <!-- ── Status + QR Code ── -->
+    <div class="card wa-status-card" id="statusCard">
+      <h2 class="card-title">📱 Status da Conexão</h2>
+
+      <div id="waStatusDisplay">
+        <div class="wa-status-icon" id="waStatusIcon">📴</div>
+        <p class="wa-status-label" id="waStatusLabel">Verificando...</p>
+        <p class="wa-status-desc" id="waStatusDesc">Checando conexão com Evolution API</p>
+      </div>
+
+      <!-- QR Code area -->
+      <div id="qrArea" hidden>
+        <div class="wa-qr-wrap" id="qrWrap">
+          <div class="wa-qr-placeholder">
+            <div class="wa-qr-placeholder-icon">📱</div>
+            <p>QR Code aparecerá aqui</p>
+          </div>
+        </div>
+        <p style="font-size: 0.78rem; color: var(--text-3); text-align: center;">
+          Abra o WhatsApp → Aparelhos Conectados → Conectar Aparelho
+        </p>
+      </div>
+
+      <!-- Ações -->
+      <div style="margin-top: 1rem; display: flex; flex-direction: column; gap: 0.5rem;">
+        <button class="wa-btn wa-btn-connect" id="connectBtn" type="button">
+          <span>📲</span> Conectar WhatsApp
+        </button>
+        <button class="wa-btn wa-btn-disconnect" id="disconnectBtn" type="button" hidden>
+          <span>🔌</span> Desconectar
+        </button>
+      </div>
+    </div>
+
+    <!-- ── Configuração ── -->
+    <div class="card">
+      <h2 class="card-title">⚙️ Configuração</h2>
+
+      <div class="wa-form-group">
+        <label class="wa-form-label" for="webhookUrl">URL pública do servidor</label>
+        <input class="wa-input" id="webhookUrl" type="url"
+               placeholder="https://meu-server.com" />
+        <p class="wa-form-hint">
+          A URL onde seu GerminaVision está rodando. Exemplo:<br>
+          <code style="color: var(--green-400);">https://germinavision.meudominio.com</code>
+        </p>
+      </div>
+
+      <div class="wa-form-group">
+        <label class="wa-form-label" for="evoUrl">URL da Evolution API</label>
+        <input class="wa-input" id="evoUrl" type="url"
+               placeholder="https://evolution.meudominio.com" />
+        <p class="wa-form-hint">Endereço da sua instância Evolution API</p>
+      </div>
+
+      <div class="wa-form-group">
+        <label class="wa-form-label" for="evoKey">API Key da Evolution</label>
+        <input class="wa-input" id="evoKey" type="password"
+               placeholder="sua_chave_aqui" />
+        <p class="wa-form-hint">Chave de autenticação da Evolution API</p>
+      </div>
+
+      <div class="wa-form-group">
+        <label class="wa-form-label" for="evoInstance">Nome da instância</label>
+        <input class="wa-input" id="evoInstance" type="text"
+               placeholder="germinavision" value="germinavision" />
+        <p class="wa-form-hint">Identificador único da instância WhatsApp</p>
+      </div>
+
+      <!-- How it works -->
+      <div style="margin-top: 1.5rem; border-top: 1px solid var(--border); padding-top: 1rem;">
+        <p class="card-title" style="font-size: 0.85rem;">📋 Como funciona</p>
+        <div class="wa-steps">
+          <div class="wa-step">
+            <div class="wa-step-num">1</div>
+            <div class="wa-step-text">
+              <p class="wa-step-title">Preencha as configs</p>
+              <p class="wa-step-desc">URL do servidor, dados da Evolution API</p>
+            </div>
+          </div>
+          <div class="wa-step">
+            <div class="wa-step-num">2</div>
+            <div class="wa-step-text">
+              <p class="wa-step-title">Conecte o WhatsApp</p>
+              <p class="wa-step-desc">Escaneie o QR Code com seu celular</p>
+            </div>
+          </div>
+          <div class="wa-step">
+            <div class="wa-step-num">3</div>
+            <div class="wa-step-text">
+              <p class="wa-step-title">Use pelo WhatsApp</p>
+              <p class="wa-step-desc">Mande fotos e receba análises automaticamente!</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Features ── -->
+  <div class="card">
+    <h2 class="card-title">🚀 O que seu agente faz no WhatsApp</h2>
+    <div class="wa-features">
+      <div class="wa-feature">
+        <div class="wa-feature-icon">📷</div>
+        <p class="wa-feature-title">Análise por Foto</p>
+        <p class="wa-feature-desc">Mande uma foto da bandeja e receba detecção YOLO + taxa de germinação</p>
+      </div>
+      <div class="wa-feature">
+        <div class="wa-feature-icon">🤖</div>
+        <p class="wa-feature-title">Chat com IA</p>
+        <p class="wa-feature-desc">Converse com o GerminaBot sobre dúvidas de cultivo e germinação</p>
+      </div>
+      <div class="wa-feature">
+        <div class="wa-feature-icon">📊</div>
+        <p class="wa-feature-title">Estatísticas</p>
+        <p class="wa-feature-desc">Digite "status" para ver as estatísticas gerais das suas análises</p>
+      </div>
+      <div class="wa-feature">
+        <div class="wa-feature-icon">📋</div>
+        <p class="wa-feature-title">Histórico</p>
+        <p class="wa-feature-desc">Digite "histórico" para ver as últimas 5 análises realizadas</p>
+      </div>
+      <div class="wa-feature">
+        <div class="wa-feature-icon">💡</div>
+        <p class="wa-feature-title">Dicas</p>
+        <p class="wa-feature-desc">Digite "dica" para receber uma dica de germinação aleatória</p>
+      </div>
+      <div class="wa-feature">
+        <div class="wa-feature-icon">❓</div>
+        <p class="wa-feature-title">Menu de Ajuda</p>
+        <p class="wa-feature-desc">Digite "ajuda" para ver todos os comandos disponíveis</p>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<!-- ═══ FOOTER ═══ -->
+<footer class="footer">
+  <p>GerminaVision · Sistema de Visão Computacional para Monitoramento de Germinação</p>
+  <p class="footer-sub">Flask · YOLO11 · PyTorch · Evolution API</p>
+</footer>
+
+<!-- Toast -->
+<div class="toast" id="toast" role="alert" aria-live="assertive"></div>
+
+<script>
+(function() {
+  // ── Elements ────────────────────────────────────────────────────────────────
+  const statusDot       = document.getElementById('statusDot');
+  const statusText      = document.getElementById('statusText');
+  const waStatusIcon    = document.getElementById('waStatusIcon');
+  const waStatusLabel   = document.getElementById('waStatusLabel');
+  const waStatusDesc    = document.getElementById('waStatusDesc');
+  const statusCard      = document.getElementById('statusCard');
+  const qrArea          = document.getElementById('qrArea');
+  const qrWrap          = document.getElementById('qrWrap');
+  const connectBtn      = document.getElementById('connectBtn');
+  const disconnectBtn   = document.getElementById('disconnectBtn');
+  const webhookUrl      = document.getElementById('webhookUrl');
+  const evoUrl          = document.getElementById('evoUrl');
+  const evoKey          = document.getElementById('evoKey');
+  const evoInstance     = document.getElementById('evoInstance');
+  const toast           = document.getElementById('toast');
+
+  // ── Toast ───────────────────────────────────────────────────────────────────
+  function showToast(msg, type = 'success') {
+    toast.textContent = msg;
+    toast.className = 'toast show ' + type;
+    setTimeout(() => toast.className = 'toast', 3500);
+  }
+
+  // ── Load saved config ──────────────────────────────────────────────────────
+  function loadConfig() {
+    webhookUrl.value  = localStorage.getItem('wa_webhook_url')  || '';
+    evoUrl.value      = localStorage.getItem('wa_evo_url')      || '';
+    evoKey.value      = localStorage.getItem('wa_evo_key')      || '';
+    evoInstance.value  = localStorage.getItem('wa_evo_instance') || 'germinavision';
+  }
+
+  function saveConfig() {
+    localStorage.setItem('wa_webhook_url',   webhookUrl.value.trim());
+    localStorage.setItem('wa_evo_url',       evoUrl.value.trim());
+    localStorage.setItem('wa_evo_key',       evoKey.value.trim());
+    localStorage.setItem('wa_evo_instance',  evoInstance.value.trim());
+  }
+
+  // ── Status display ──────────────────────────────────────────────────────────
+  function updateStatusDisplay(data) {
+    const { configured, state, message } = data;
+
+    if (!configured) {
+      waStatusIcon.textContent  = '⚙️';
+      waStatusLabel.textContent = 'Não configurado';
+      waStatusDesc.textContent  = message || 'Configure a Evolution API no painel ao lado';
+      statusDot.className = 'status-dot';
+      statusText.textContent = 'Sem WhatsApp';
+      connectBtn.hidden = false;
+      disconnectBtn.hidden = true;
+      qrArea.hidden = true;
+      return;
+    }
+
+    switch (state) {
+      case 'open':
+        waStatusIcon.textContent  = '✅';
+        waStatusLabel.textContent = 'Conectado';
+        waStatusDesc.textContent  = message;
+        statusCard.className = 'card wa-status-card wa-status--open';
+        statusDot.className = 'status-dot ok';
+        statusText.textContent = 'WhatsApp ✅';
+        connectBtn.hidden = true;
+        disconnectBtn.hidden = false;
+        qrArea.hidden = true;
+        break;
+      case 'connecting':
+        waStatusIcon.textContent  = '🔄';
+        waStatusLabel.textContent = 'Conectando...';
+        waStatusDesc.textContent  = message;
+        statusDot.className = 'status-dot';
+        statusText.textContent = 'Conectando…';
+        connectBtn.hidden = true;
+        disconnectBtn.hidden = true;
+        break;
+      default: // close, error
+        waStatusIcon.textContent  = '📴';
+        waStatusLabel.textContent = 'Desconectado';
+        waStatusDesc.textContent  = message;
+        statusDot.className = 'status-dot error';
+        statusText.textContent = 'WhatsApp 🔴';
+        connectBtn.hidden = false;
+        disconnectBtn.hidden = true;
+        qrArea.hidden = true;
+    }
+  }
+
+  // ── Check status ────────────────────────────────────────────────────────────
+  async function checkStatus() {
+    try {
+      const res  = await fetch('/api/whatsapp/status');
+      const data = await res.json();
+      updateStatusDisplay(data);
+    } catch {
+      updateStatusDisplay({ configured: false, state: 'error', message: 'Servidor offline' });
+    }
+  }
+
+  // ── Connect ─────────────────────────────────────────────────────────────────
+  connectBtn.addEventListener('click', async () => {
+    const url = webhookUrl.value.trim();
+    if (!url) {
+      showToast('Preencha a URL pública do servidor', 'error');
+      webhookUrl.focus();
+      return;
+    }
+
+    saveConfig();
+    connectBtn.disabled = true;
+    connectBtn.innerHTML = '<span>⏳</span> Criando instância...';
+
+    try {
+      const res = await fetch('/api/whatsapp/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ webhook_url: url }),
+      });
+      const data = await res.json();
+
+      if (data.error) {
+        showToast(data.error, 'error');
+        connectBtn.disabled = false;
+        connectBtn.innerHTML = '<span>📲</span> Conectar WhatsApp';
+        return;
+      }
+
+      // Show QR Code
+      qrArea.hidden = false;
+      if (data.qrcode) {
+        const img = document.createElement('img');
+        img.src = data.qrcode.startsWith('data:') ? data.qrcode : 'data:image/png;base64,' + data.qrcode;
+        img.alt = 'QR Code WhatsApp';
+        qrWrap.innerHTML = '';
+        qrWrap.appendChild(img);
+      }
+
+      if (data.pairingCode) {
+        const code = document.createElement('p');
+        code.style.cssText = 'text-align:center;font-family:var(--font-mono);font-size:1.4rem;font-weight:700;color:#25d366;margin-top:0.5rem;letter-spacing:0.1em';
+        code.textContent = data.pairingCode;
+        qrWrap.appendChild(code);
+      }
+
+      showToast('Escaneie o QR Code no WhatsApp!', 'success');
+
+      // Poll for connection
+      let attempts = 0;
+      const poll = setInterval(async () => {
+        attempts++;
+        if (attempts > 60) { clearInterval(poll); return; }
+        try {
+          const sr = await fetch('/api/whatsapp/status');
+          const sd = await sr.json();
+          if (sd.state === 'open') {
+            clearInterval(poll);
+            updateStatusDisplay(sd);
+            showToast('WhatsApp conectado com sucesso! 🎉', 'success');
+          }
+        } catch {}
+      }, 3000);
+
+    } catch (e) {
+      showToast('Erro ao conectar: ' + e.message, 'error');
+    } finally {
+      connectBtn.disabled = false;
+      connectBtn.innerHTML = '<span>📲</span> Conectar WhatsApp';
+    }
+  });
+
+  // ── Disconnect ──────────────────────────────────────────────────────────────
+  disconnectBtn.addEventListener('click', async () => {
+    if (!confirm('Tem certeza que deseja desconectar o WhatsApp?')) return;
+
+    try {
+      const res  = await fetch('/api/whatsapp/disconnect', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        showToast('WhatsApp desconectado', 'success');
+        checkStatus();
+      } else {
+        showToast(data.error || 'Erro ao desconectar', 'error');
+      }
+    } catch (e) {
+      showToast('Erro: ' + e.message, 'error');
+    }
+  });
+
+  // ── Init ────────────────────────────────────────────────────────────────────
+  loadConfig();
+  checkStatus();
+
+  // Auto-refresh status every 10s
+  setInterval(checkStatus, 10000);
+})();
+</script>
+</body>
+</html>
