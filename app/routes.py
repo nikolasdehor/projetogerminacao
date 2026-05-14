@@ -15,7 +15,7 @@ from werkzeug.utils import secure_filename
 import sqlite3
 
 from app.database import (
-    delete_analysis, get_history, get_temporal_series, insert_analysis
+    count_analyses, delete_analysis, get_history, get_temporal_series, insert_analysis
 )
 from app.inference import run_inference
 
@@ -131,9 +131,12 @@ def analyze():
 
 @bp.route("/api/history")
 def history():
-    limit = int(request.args.get("limit", 50))
-    records = get_history(current_app.config["DB_PATH"], limit=limit)
-    return jsonify(records)
+    limit  = min(int(request.args.get("limit",  20)), 100)
+    offset = max(int(request.args.get("offset",  0)),   0)
+    db     = current_app.config["DB_PATH"]
+    records = get_history(db, limit=limit, offset=offset)
+    total   = count_analyses(db)
+    return jsonify({"items": records, "total": total, "limit": limit, "offset": offset})
 
 
 @bp.route("/api/history/<int:analysis_id>", methods=["DELETE"])

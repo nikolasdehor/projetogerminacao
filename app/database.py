@@ -134,7 +134,7 @@ def insert_analysis(
         return cur.lastrowid
 
 
-def get_history(db_path: str, limit: int = 50) -> list[dict]:
+def get_history(db_path: str, limit: int = 20, offset: int = 0) -> list[dict]:
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
@@ -143,10 +143,16 @@ def get_history(db_path: str, limit: int = 50) -> list[dict]:
                       CASE WHEN source IS NOT NULL THEN source
                            WHEN filename LIKE 'wa_%' OR filename LIKE 'whatsapp_%' THEN 'whatsapp'
                            ELSE 'web' END AS source
-               FROM analyses ORDER BY id DESC LIMIT ?""",
-            (limit,)
+               FROM analyses ORDER BY id DESC LIMIT ? OFFSET ?""",
+            (limit, offset)
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def count_analyses(db_path: str) -> int:
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute("SELECT COUNT(*) FROM analyses").fetchone()
+    return row[0] if row else 0
 
 
 def delete_analysis(db_path: str, analysis_id: int) -> bool:

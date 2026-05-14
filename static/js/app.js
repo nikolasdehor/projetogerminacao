@@ -174,7 +174,7 @@ function renderResult(data) {
   setTimeout(() => section.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
 
   // Hero stats
-  loadHistory();
+  loadHistory(true);
 }
 
 // ── Lightbox ──────────────────────────────────────────────────────────────────
@@ -195,18 +195,38 @@ $('lightbox').addEventListener('click', e => { if (e.target === $('lightbox')) c
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbox(); });
 
 // ── History ───────────────────────────────────────────────────────────────────
-async function loadHistory() {
+const HISTORY_PAGE = 20;
+let _historyOffset = 0;
+let _historyTotal  = 0;
+let _historyAllRows = [];  // acumula registros já carregados
+
+async function loadHistory(reset = true) {
+  if (reset) {
+    _historyOffset  = 0;
+    _historyAllRows = [];
+  }
   try {
-    const records = await fetch('/api/history?limit=30').then(r => r.json());
-    renderHistory(records);
-    updateHeroStats(records);
+    const data = await fetch(`/api/history?limit=${HISTORY_PAGE}&offset=${_historyOffset}`).then(r => r.json());
+    _historyTotal   = data.total;
+    _historyOffset += data.items.length;
+    _historyAllRows = _historyAllRows.concat(data.items);
+    renderHistory(_historyAllRows, data.total);
+    if (reset) updateHeroStats(data.total, data.items);
   } catch { /* silencioso */ }
 }
-function renderHistory(records) {
-  $('historyCount').textContent = `${records.length} registro${records.length!==1?'s':''}`;
+
+async function loadMoreHistory() {
+  if (_historyOffset >= _historyTotal) return;
+  await loadHistory(false);
+}
+
+function renderHistory(records, total) {
+  $('historyCount').textContent = `${total} registro${total!==1?'s':''}`;
   const body = $('historyBody');
   if (!records.length) {
-    body.innerHTML = '<tr class="empty-row"><td colspan="10">Nenhuma análise ainda. Faça o primeiro upload! 🌱</td></tr>'; return;
+    body.innerHTML = '<tr class="empty-row"><td colspan="10">Nenhuma análise ainda. Faça o primeiro upload! 🌱</td></tr>';
+    _updateLoadMoreBtn(0, 0);
+    return;
   }
   body.innerHTML = records.map(r => `
     <tr>
@@ -221,18 +241,33 @@ function renderHistory(records) {
       <td>${r.result_image ? `<img src="${r.result_image}" class="result-thumb" alt="resultado" onclick="openLightbox('${r.result_image}')" />` : '—'}</td>
       <td><button class="btn-del" title="Deletar" onclick="deleteRecord(${r.id})">🗑</button></td>
     </tr>`).join('');
+  _updateLoadMoreBtn(_historyOffset, total);
 }
-function updateHeroStats(records) {
-  $('statTotal').textContent = records.length;
-  if (!records.length) { $('statGermRate').textContent = '—'; $('statLeafAvg').textContent = '—'; return; }
-  $('statGermRate').textContent = (records.reduce((s,r) => s+r.germination_rate,0)/records.length).toFixed(1) + '%';
-  $('statLeafAvg').textContent  = (records.reduce((s,r) => s+r.leaf_avg,0)/records.length).toFixed(1);
+
+function _updateLoadMoreBtn(loaded, total) {
+  const btn = $('loadMore');
+  if (!btn) return;
+  const remaining = total - loaded;
+  if (remaining > 0) {
+    btn.hidden = false;
+    btn.textContent = `Carregar mais (${remaining} restante${remaining!==1?'s':''})`;
+  } else {
+    btn.hidden = true;
+  }
 }
+
+function updateHeroStats(total, recentItems) {
+  $('statTotal').textContent = total;
+  if (!recentItems.length) { $('statGermRate').textContent = '—'; $('statLeafAvg').textContent = '—'; return; }
+  $('statGermRate').textContent = (recentItems.reduce((s,r) => s+r.germination_rate,0)/recentItems.length).toFixed(1) + '%';
+  $('statLeafAvg').textContent  = (recentItems.reduce((s,r) => s+r.leaf_avg,0)/recentItems.length).toFixed(1);
+}
+
 async function deleteRecord(id) {
   if (!confirm('Deletar este registro?')) return;
   await fetch(`/api/history/${id}`, { method: 'DELETE' });
   showToast('Registro deletado.', 'success');
-  await loadHistory();
+  await loadHistory(true);
   await loadTemporal();
 }
 
@@ -499,8 +534,10 @@ async function sendChat() {
 // ── Init ──────────────────────────────────────────────────────────────────────
 (async () => {
   await checkStatus();
-  await loadHistory();
+  await loadHistory(true);
   await loadTemporal();
+  const loadMoreBtn = $('loadMore');
+  if (loadMoreBtn) loadMoreBtn.addEventListener('click', loadMoreHistory);
   // Mostra badge do chat após 3s
   setTimeout(() => { if (chatPanel.hidden) $('chatUnread').hidden = false; }, 3000);
 })();
