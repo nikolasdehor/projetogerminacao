@@ -145,7 +145,7 @@ def get_history(db_path: str, limit: int = 20, offset: int = 0) -> list[dict]:
                       CASE WHEN filename LIKE 'wa_%' OR filename LIKE 'whatsapp_%' THEN 'whatsapp'
                            WHEN source IS NOT NULL THEN source
                            ELSE 'web' END AS source,
-                      CASE WHEN sender IS NOT NULL THEN sender
+                      CASE WHEN sender IS NOT NULL AND sender != '' THEN sender
                            WHEN filename LIKE 'whatsapp_%' THEN SUBSTR(filename, 10)
                            ELSE NULL END AS sender
                FROM analyses ORDER BY id DESC LIMIT ? OFFSET ?""",
