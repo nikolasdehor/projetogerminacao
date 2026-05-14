@@ -286,10 +286,16 @@ def run_inference(
             germinated = True
             pid: Optional[int] = plant_id
         elif cls_name == LEAF_CLASS:
-            leaf_n = 1
-            label = f"Folha {conf:.0%}"
-            germinated = False
-            pid = None
+            # Folha entra no JSON mas não é desenhada (evita poluição visual)
+            detections.append({
+                "class":      cls_name,
+                "confidence": round(conf, 3),
+                "bbox":       [x1, y1, x2, y2],
+                "germinated": False,
+                "leaf_count": 1,
+                "plant_id":   None,
+            })
+            continue
         else:
             leaf_n = 0
             label = f"{cls_name} {conf:.0%}"
