@@ -43,6 +43,14 @@ function formatTs(ts) {
   const [h, min] = time.split(':');
   return `${d}/${m} ${h}:${min}`;
 }
+function formatPhone(num) {
+  if (!num) return '';
+  const s = String(num).replace(/\D/g, '');
+  if (s.length === 13) return `+${s.slice(0,2)} ${s.slice(2,4)} ${s.slice(4,9)}-${s.slice(9)}`;
+  if (s.length === 12) return `+${s.slice(0,2)} ${s.slice(2,4)} ${s.slice(4,8)}-${s.slice(8)}`;
+  if (s.length === 11) return `(${s.slice(0,2)}) ${s.slice(2,7)}-${s.slice(7)}`;
+  return num;
+}
 
 // ── Status ────────────────────────────────────────────────────────────────────
 async function checkStatus() {
@@ -237,7 +245,7 @@ function renderHistory(records, total) {
       <td>${r.germinated}</td>
       <td><span class="pill ${r.germination_rate>=50?'pill-green':'pill-red'}">${r.germination_rate}%</span></td>
       <td>${r.leaf_avg}</td>
-      <td><span class="badge-source" title="${r.source==='whatsapp'?'Análise via WhatsApp':'Análise via dashboard'}">${r.source==='whatsapp'?'📱':'🌐'}</span></td>
+      <td><span class="badge-source" title="${r.source==='whatsapp'?'Análise via WhatsApp':'Análise via dashboard'}">${r.source==='whatsapp' ? '📱' + (r.sender ? ' ' + formatPhone(r.sender) : '') : '🌐'}</span></td>
       <td>${r.result_image ? `<img src="${r.result_image}" class="result-thumb" alt="resultado" onclick="openLightbox('${r.result_image}')" />` : '—'}</td>
       <td><button class="btn-del" title="Deletar" onclick="deleteRecord(${r.id})">🗑</button></td>
     </tr>`).join('');

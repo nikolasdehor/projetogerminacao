@@ -48,6 +48,7 @@ def init_db(db_path: str) -> None:
             "ALTER TABLE analyses ADD COLUMN analysis_summary TEXT",
             "ALTER TABLE analyses ADD COLUMN analysis_embedding BLOB",
             "ALTER TABLE analyses ADD COLUMN source TEXT",
+            "ALTER TABLE analyses ADD COLUMN sender TEXT",
         ):
             try:
                 conn.execute(alter)
@@ -96,6 +97,7 @@ def insert_analysis(
     result_image: str,
     day_label: Optional[str] = None,
     source: str = "web",
+    sender: Optional[str] = None,
 ) -> int:
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -125,10 +127,10 @@ def insert_analysis(
         cur = conn.execute(
             """INSERT INTO analyses
                (timestamp, filename, total_detected, germinated, germination_rate,
-                leaf_avg, result_image, day_label, analysis_summary, analysis_embedding, source)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                leaf_avg, result_image, day_label, analysis_summary, analysis_embedding, source, sender)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (ts, filename, total_detected, germinated, germination_rate,
-             leaf_avg, result_image, day_label, summary, analysis_embedding, source),
+             leaf_avg, result_image, day_label, summary, analysis_embedding, source, sender),
         )
         conn.commit()
         return cur.lastrowid
@@ -142,7 +144,10 @@ def get_history(db_path: str, limit: int = 20, offset: int = 0) -> list[dict]:
                       leaf_avg, result_image, day_label, analysis_summary,
                       CASE WHEN source IS NOT NULL THEN source
                            WHEN filename LIKE 'wa_%' OR filename LIKE 'whatsapp_%' THEN 'whatsapp'
-                           ELSE 'web' END AS source
+                           ELSE 'web' END AS source,
+                      CASE WHEN sender IS NOT NULL THEN sender
+                           WHEN filename LIKE 'whatsapp_%' THEN SUBSTR(filename, 10)
+                           ELSE NULL END AS sender
                FROM analyses ORDER BY id DESC LIMIT ? OFFSET ?""",
             (limit, offset)
         ).fetchall()

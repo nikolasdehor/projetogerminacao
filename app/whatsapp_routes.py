@@ -271,6 +271,7 @@ def _handle_image_message(client, sender: str, payload: dict):
             result_image=result["result_image"],
             day_label=None,
             source="whatsapp",
+            sender=sender,
         )
     except Exception:
         pass  # Não impede a resposta
