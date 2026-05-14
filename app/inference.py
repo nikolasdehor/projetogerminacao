@@ -156,9 +156,9 @@ def _estimate_leaves_by_contours(crop_bgr: np.ndarray) -> int:
     if green_ratio <= 0.02:
         return 0
 
-    # Distance transform: threshold 0.35 (mais permissivo que 0.4, menos que 0.3)
+    # Distance transform: threshold 0.25 (mais permissivo, captura mais peaks sobrepostos)
     dist = cv2.distanceTransform(mask, cv2.DIST_L2, 5)
-    _, sure_fg = cv2.threshold(dist, 0.35 * dist.max(), 255, 0)
+    _, sure_fg = cv2.threshold(dist, 0.25 * dist.max(), 255, 0)
     sure_fg = sure_fg.astype(np.uint8)
     num_labels, _ = cv2.connectedComponents(sure_fg)
     n_peaks = max(0, num_labels - 1)  # subtrai background
@@ -181,9 +181,17 @@ def _estimate_leaves_by_contours(crop_bgr: np.ndarray) -> int:
         else:
             n_estimated = max(1, n_by_area)
 
-    # Sanity check: >30% verde implica pelo menos 2 folhas
-    if green_ratio >= 0.30:
+    # Floor por área verde absoluta (pixels): discrimina melhor que green_ratio puro
+    # pois bboxes apertadas têm green_ratio alto independente do tamanho da planta
+    green_pixels = green_ratio * crop_area
+    if green_pixels >= 15000:
+        n_estimated = max(n_estimated, 4)
+    elif green_pixels >= 6000:
+        n_estimated = max(n_estimated, 3)
+    elif green_pixels >= 2000:
         n_estimated = max(n_estimated, 2)
+    elif green_pixels >= 500:
+        n_estimated = max(n_estimated, 1)
 
     # Cap: morango D7-D14 com cotilédones pode ter até 6 folhas
     return min(n_estimated, 6)
@@ -301,11 +309,12 @@ def run_inference(
 
         if cls_name in GERMINATION_CLASSES:
             plant_id += 1
-            leaf_n = _leaves_inside(folha_boxes, bbox)
-            # Fallback: modelo não detectou Folhas via YOLO — estima por contornos verdes
-            if leaf_n == 0:
-                crop = img_bgr[y1:y2, x1:x2]
-                leaf_n = _estimate_leaves_by_contours(crop)
+            leaf_yolo = _leaves_inside(folha_boxes, bbox)
+            crop = img_bgr[y1:y2, x1:x2]
+            leaf_contour = _estimate_leaves_by_contours(crop)
+            # Usa o maior sinal: YOLO pode subestimar (não detectou todas as Folhas),
+            # contorno pode subestimar (threshold colapsou peaks sobrepostos)
+            leaf_n = max(leaf_yolo, leaf_contour)
             leaf_counts.append(leaf_n)
             label = f"#{plant_id} Germ {conf:.0%} | {leaf_n}f"
             germinated = True
