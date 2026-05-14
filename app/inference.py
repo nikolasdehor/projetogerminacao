@@ -196,7 +196,13 @@ def _estimate_leaves_by_contours(crop_bgr: np.ndarray) -> int:
     else:
         n_estimated = max(n_estimated, 1)
 
-    # Cap: morango D7-D14 com cotilédones pode ter até 6 folhas
+    # Cap descendente por tamanho: muda pequena não pode reportar muitas folhas
+    if crop_area < 4000:
+        n_estimated = min(n_estimated, 2)   # emergente: max 2 cotilédones
+    elif crop_area < 8000:
+        n_estimated = min(n_estimated, 3)   # planta pequena: max 3 folhas
+
+    # Cap geral: morango D7-D14 com cotilédones pode ter até 6 folhas
     return min(n_estimated, 6)
 
 
