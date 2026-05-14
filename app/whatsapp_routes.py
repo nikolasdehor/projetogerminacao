@@ -17,6 +17,23 @@ from app.whatsapp import get_client
 wp = Blueprint("whatsapp", __name__)
 
 
+def _extract_quoted_text(msg: dict) -> str | None:
+    """Retorna texto da mensagem citada (reply/quote do WhatsApp), ou None."""
+    ctx = msg.get("extendedTextMessage", {}).get("contextInfo", {})
+    if not ctx:
+        return None
+    quoted = ctx.get("quotedMessage", {})
+    if not quoted:
+        return None
+    return (
+        quoted.get("conversation")
+        or quoted.get("extendedTextMessage", {}).get("text")
+        or quoted.get("imageMessage", {}).get("caption")
+        or quoted.get("documentMessage", {}).get("caption")
+        or "(mídia sem legenda)"
+    )
+
+
 # ── Página de configuração ────────────────────────────────────────────────────
 
 @wp.route("/whatsapp")
@@ -195,6 +212,8 @@ def _handle_message(payload: dict):
     if not text:
         return
 
+    quoted = _extract_quoted_text(msg)
+
     # Comandos especiais
     if text in ("status", "estatísticas", "estatisticas", "stats"):
         _handle_status_command(client, sender)
@@ -205,8 +224,8 @@ def _handle_message(payload: dict):
     elif text in ("ajuda", "help", "menu", "?"):
         _handle_help_command(client, sender)
     else:
-        # Passa para o GerminaBot (IA)
-        _handle_chat_message(client, sender, text)
+        # Passa para o GerminaBot (IA) com contexto de quote se houver
+        _handle_chat_message(client, sender, text, quoted=quoted)
 
 
 def _handle_image_message(client, sender: str, payload: dict):
@@ -218,7 +237,8 @@ def _handle_image_message(client, sender: str, payload: dict):
     upload_dir = current_app.config["UPLOAD_FOLDER"]
     result_dir = current_app.config["RESULT_FOLDER"]
 
-    # Notifica que estamos processando
+    # Notifica que estamos processando (com indicador "digitando..." para feedback visual)
+    client.send_presence(sender, "composing", delay_ms=3000)
     client.send_text(sender, "🔬 *Analisando sua imagem...*\nAguarde um momento!")
 
     # Baixa a imagem
@@ -254,24 +274,26 @@ def _handle_image_message(client, sender: str, payload: dict):
     except Exception:
         pass  # Não impede a resposta
 
-    # Monta resposta
+    # Monta resposta — taxa baseada na capacidade da bandeja (default 200 células)
+    # Limiares: usamos média entre hortaliças (80%) e morango (70%) → 75% como excelente
     rate = result["germination_rate"]
-    if rate >= 80:
+    capacity = result.get("cells_detected") or result.get("tray_capacity", 200)
+    if rate >= 75:
         emoji = "🟢"
-        avaliacao = "Excelente! Retorno comercial garantido."
-    elif rate >= 60:
+        avaliacao = "Excelente germinação! Bandeja pronta para o próximo ciclo."
+    elif rate >= 55:
         emoji = "🟡"
-        avaliacao = "Moderado. Viável, mas com perda de eficiência."
+        avaliacao = "Germinação moderada. Considere replantio nos espaços vazios ou verifique uniformidade."
     else:
         emoji = "🔴"
-        avaliacao = "Atenção! Risco de prejuízo. Avalie as sementes e substrato."
+        avaliacao = "Atenção! Taxa baixa. Avalie qualidade das sementes, substrato, umidade e temperatura."
 
     texto = (
         f"🌱 *Análise da Bandeja — GerminaVision*\n\n"
         f"📊 *Resultados:*\n"
-        f"• Mudas detectadas: {result['total_detected']}\n"
-        f"• Germinadas: {result['germinated']} ({rate}%)\n"
-        f"• Folhas por muda (média): {result['leaf_avg']}\n"
+        f"• Plantas germinadas: {result['germinated']} de {capacity} células ({rate}%)\n"
+        f"• Folhas por planta (média): {result['leaf_avg']}\n"
+        f"• Total de folhas estimadas: {int(round(result['leaf_avg'] * result['germinated']))}\n"
         f"• Tempo de análise: {result['inference_time_s']}s\n\n"
         f"{emoji} *{avaliacao}*\n\n"
     )
@@ -285,12 +307,14 @@ def _handle_image_message(client, sender: str, payload: dict):
     if classes_count:
         texto += "📋 *Detalhamento:*\n"
         class_emojis = {
-            "seedling": "🌿", "twoseedling": "🌿🌿", "weak": "😟",
-            "noseedling": "❌", "processed": "✅", "askew": "↗️",
+            "Germinacao": "🌱",
+            "Folha": "🍃",
         }
+        class_display = {"Germinacao": "Germinação", "Folha": "Folha"}
         for cls, count in sorted(classes_count.items(), key=lambda x: -x[1]):
             emoji_cls = class_emojis.get(cls, "•")
-            texto += f"  {emoji_cls} {cls}: {count}\n"
+            label = class_display.get(cls, cls)
+            texto += f"  {emoji_cls} {label}: {count}\n"
 
     # Envia a imagem resultado com legenda
     result_image_path = Path(current_app.root_path).parent / result["result_image"].lstrip("/")
@@ -392,10 +416,22 @@ def _handle_help_command(client, sender: str):
     client.send_text(sender, texto)
 
 
-def _handle_chat_message(client, sender: str, text: str):
-    """Passa mensagem para o GerminaBot (IA)."""
+def _handle_chat_message(client, sender: str, text: str, quoted: str | None = None):
+    """Passa mensagem para o GerminaBot (IA) com indicador 'digitando...' e memória de conversa."""
     from flask import current_app
     from app.chatbot import gerar_resposta
 
-    resposta = gerar_resposta(text, current_app.config["DB_PATH"])
+    # Dispara "digitando..." imediatamente. O delay 5000ms cobre a chamada LLM (~3-8s).
+    client.send_presence(sender, "composing", delay_ms=5000)
+
+    if quoted:
+        quoted_short = quoted[:300] + ("..." if len(quoted) > 300 else "")
+        composed = f'[Respondendo a sua mensagem anterior: "{quoted_short}"]\n{text}'
+    else:
+        composed = text
+
+    resposta = gerar_resposta(composed, current_app.config["DB_PATH"], sender=sender)
+
+    # Encerra o indicador antes de mandar a resposta
+    client.send_presence(sender, "paused", delay_ms=0)
     client.send_text(sender, resposta)

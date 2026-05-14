@@ -110,28 +110,35 @@ def _leaves_inside(folha_boxes: list[tuple[int, int, int, int]], germ_bbox: tupl
 
 
 def _count_visible_cells(img_bgr: np.ndarray) -> Optional[int]:
-    """Conta células visíveis da bandeja por contornos retangulares."""
+    """Conta células visíveis da bandeja com adaptive threshold (lida com iluminação variada)."""
     gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-    _, thresh = cv2.threshold(gray, 100, 255, cv2.THRESH_BINARY_INV)
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-    closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
-    contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     h, w = img_bgr.shape[:2]
+    # blockSize deve ser ímpar e maior que uma célula típica
+    block = max(51, int(min(h, w) * 0.1) | 1)
+    thresh = cv2.adaptiveThreshold(
+        gray, 255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY,
+        blockSize=block,
+        C=10,
+    )
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+    # Inverte para que células (regiões escuras) virem contornos externos
+    inv = cv2.bitwise_not(closed)
+    contours, _ = cv2.findContours(inv, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
     img_area = float(h * w)
     valid = []
     for c in contours:
         area = cv2.contourArea(c)
-        if not (0.01 * img_area <= area <= 0.20 * img_area):
+        if not (0.005 * img_area <= area <= 0.25 * img_area):
             continue
         cw_box = cv2.boundingRect(c)[2]
         ch_box = cv2.boundingRect(c)[3]
         aspect = cw_box / max(ch_box, 1)
-        if not (0.4 < aspect < 2.5):
-            continue
-        hull_area = cv2.contourArea(cv2.convexHull(c))
-        if hull_area > 0 and (area / hull_area) > 0.7:
+        if 0.4 < aspect < 2.5:
             valid.append(c)
-    return len(valid) if valid else None
+    return len(valid) if len(valid) >= 2 else None
 
 
 def _estimate_leaves_by_contours(crop_bgr: np.ndarray) -> int:
