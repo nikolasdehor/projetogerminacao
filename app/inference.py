@@ -142,26 +142,39 @@ def _count_visible_cells(img_bgr: np.ndarray) -> Optional[int]:
 
 
 def _estimate_leaves_by_contours(crop_bgr: np.ndarray) -> int:
-    """Fallback: estima # de folhas por análise de contornos verdes no crop."""
+    """Estima folhas via watershed peaks + área verde. Cap 5 (morango D7-D14)."""
     if crop_bgr is None or crop_bgr.size == 0:
         return 0
     hsv = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2HSV)
-    # Verde morango: matiz 25-85 cobre verde claro a verde escuro
     mask = cv2.inRange(hsv, (25, 30, 30), (85, 255, 255))
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-    # Erosão extra para separar folhas que se tocam
-    mask_eroded = cv2.erode(mask, kernel, iterations=2)
-    contours, _ = cv2.findContours(mask_eroded, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
     crop_area = float(crop_bgr.shape[0] * crop_bgr.shape[1])
-    min_area = crop_area * 0.005
-    n_contours = len([c for c in contours if cv2.contourArea(c) >= min_area])
-    # Estimativa complementar por área: morango D7-D14 cada folha cobre ~10% do bbox
     green_ratio = float(cv2.countNonZero(mask)) / max(crop_area, 1)
-    n_by_area = int(round(green_ratio / 0.10))
-    n_estimated = max(n_contours, n_by_area)
-    return max(1, min(n_estimated, 8)) if green_ratio > 0.03 else 0
+    if green_ratio <= 0.02:
+        return 0
+
+    # Distance transform: peaks = centros de folhas individuais
+    dist = cv2.distanceTransform(mask, cv2.DIST_L2, 5)
+    _, sure_fg = cv2.threshold(dist, 0.4 * dist.max(), 255, 0)
+    sure_fg = sure_fg.astype(np.uint8)
+    num_labels, _ = cv2.connectedComponents(sure_fg)
+    n_peaks = max(0, num_labels - 1)  # subtrai background
+
+    # Estimativa por área: 0.12 por folha (conservador vs 0.10 anterior)
+    n_by_area = int(round(green_ratio / 0.12))
+
+    # n_peaks confiável só quando > 1 (threshold pode colapsar múltiplos em 1)
+    # Quando peaks=1, usa área como desempate; quando peaks=0 também
+    if n_peaks > 1:
+        n_estimated = max(1, min(n_peaks, n_by_area))
+    else:
+        n_estimated = max(1, n_by_area)
+
+    # Cap: morango D7-D14 raramente passa de 5 folhas verdadeiras
+    return min(n_estimated, 5)
 
 
 def run_inference(
