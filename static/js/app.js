@@ -206,7 +206,7 @@ function renderHistory(records) {
   $('historyCount').textContent = `${records.length} registro${records.length!==1?'s':''}`;
   const body = $('historyBody');
   if (!records.length) {
-    body.innerHTML = '<tr class="empty-row"><td colspan="9">Nenhuma análise ainda. Faça o primeiro upload! 🌱</td></tr>'; return;
+    body.innerHTML = '<tr class="empty-row"><td colspan="10">Nenhuma análise ainda. Faça o primeiro upload! 🌱</td></tr>'; return;
   }
   body.innerHTML = records.map(r => `
     <tr>
@@ -217,6 +217,7 @@ function renderHistory(records) {
       <td>${r.germinated}</td>
       <td><span class="pill ${r.germination_rate>=50?'pill-green':'pill-red'}">${r.germination_rate}%</span></td>
       <td>${r.leaf_avg}</td>
+      <td><span class="badge-source" title="${r.source==='whatsapp'?'Análise via WhatsApp':'Análise via dashboard'}">${r.source==='whatsapp'?'📱':'🌐'}</span></td>
       <td>${r.result_image ? `<img src="${r.result_image}" class="result-thumb" alt="resultado" onclick="openLightbox('${r.result_image}')" />` : '—'}</td>
       <td><button class="btn-del" title="Deletar" onclick="deleteRecord(${r.id})">🗑</button></td>
     </tr>`).join('');

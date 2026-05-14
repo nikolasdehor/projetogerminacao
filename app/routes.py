@@ -116,6 +116,7 @@ def analyze():
             leaf_avg=result["leaf_avg"],
             result_image=result["result_image"],
             day_label=day_label,
+            source="web",
         )
     except Exception as exc:
         return jsonify({"error": f"Erro ao gravar no banco: {exc}"}), 500

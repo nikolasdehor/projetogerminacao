@@ -270,6 +270,7 @@ def _handle_image_message(client, sender: str, payload: dict):
             leaf_avg=result["leaf_avg"],
             result_image=result["result_image"],
             day_label=None,
+            source="whatsapp",
         )
     except Exception:
         pass  # Não impede a resposta
