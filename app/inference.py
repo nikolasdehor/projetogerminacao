@@ -319,7 +319,8 @@ def run_inference(
             # contorno pode subestimar (threshold colapsou peaks sobrepostos)
             leaf_n = max(leaf_yolo, leaf_contour)
             leaf_counts.append(leaf_n)
-            label = f"#{plant_id} Germ {conf:.0%} | {leaf_n}f"
+            folhas_lbl = f"{leaf_n} folha" if leaf_n == 1 else f"{leaf_n} folhas"
+            label = f"#{plant_id} Germ {conf:.0%} | {folhas_lbl}"
             germinated = True
             pid: Optional[int] = plant_id
         elif cls_name == LEAF_CLASS:
