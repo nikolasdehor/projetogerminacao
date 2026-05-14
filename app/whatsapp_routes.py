@@ -322,10 +322,11 @@ def _handle_image_message(client, sender: str, payload: dict):
     if result_image_path.exists():
         try:
             img_bytes = result_image_path.read_bytes()
-            img_b64 = "data:image/jpeg;base64," + base64.b64encode(img_bytes).decode()
-            client.send_image_base64(sender, img_b64, caption=texto)
+            # Evolution API espera base64 puro, sem prefixo data:image/...;base64,
+            img_b64 = base64.b64encode(img_bytes).decode()
+            client.send_image_base64(sender, img_b64, filename="resultado.jpg", caption=texto)
         except Exception:
-            # Fallback: envia só texto
+            traceback.print_exc()
             client.send_text(sender, texto)
     else:
         client.send_text(sender, texto)
