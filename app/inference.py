@@ -181,16 +181,19 @@ def _estimate_leaves_by_contours(crop_bgr: np.ndarray) -> int:
         else:
             n_estimated = max(1, n_by_area)
 
-    # Floor por área verde absoluta (pixels): discrimina melhor que green_ratio puro
-    # pois bboxes apertadas têm green_ratio alto independente do tamanho da planta
-    green_pixels = green_ratio * crop_area
-    if green_pixels >= 15000:
+    # Boost: quando watershed identifica muitos peaks, confiar nele diretamente
+    if n_peaks >= 3:
+        n_estimated = max(n_estimated, n_peaks)
+
+    # Floor proporcional: combina tamanho absoluto do crop + densidade de verde
+    # Calibrado para bboxes YOLO reais (máx ~38k px, maioria 11k-30k)
+    if crop_area >= 25000 and green_ratio >= 0.40:
         n_estimated = max(n_estimated, 4)
-    elif green_pixels >= 6000:
+    elif crop_area >= 12000 and green_ratio >= 0.40:
         n_estimated = max(n_estimated, 3)
-    elif green_pixels >= 2000:
+    elif crop_area >= 5000 and green_ratio >= 0.30:
         n_estimated = max(n_estimated, 2)
-    elif green_pixels >= 500:
+    else:
         n_estimated = max(n_estimated, 1)
 
     # Cap: morango D7-D14 com cotilédones pode ter até 6 folhas
