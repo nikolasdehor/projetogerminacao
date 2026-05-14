@@ -40,6 +40,11 @@ def mcp_docs():
     return render_template("mcp.html", v=int(_time.time()))
 
 
+@bp.route("/whatsapp")
+def whatsapp():
+    return render_template("whatsapp.html", v=int(_time.time()))
+
+
 @bp.route("/favicon.ico")
 def favicon():
     svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🌱</text></svg>'
@@ -118,6 +123,7 @@ def analyze():
     result["id"]        = record_id
     result["filename"]  = file.filename
     result["day_label"] = day_label
+    result["total_folhas_estimadas"] = int(round(result["leaf_avg"] * result["germinated"]))
     return jsonify(result)
 
 
@@ -192,8 +198,9 @@ def stats():
 def chat():
     data = request.get_json(silent=True) or {}
     mensagem = (data.get("message") or "").strip()
+    sender = (data.get("sender") or "").strip() or None
     if not mensagem:
         return jsonify({"error": "Mensagem vazia"}), 400
     from app.chatbot import gerar_resposta
-    resposta = gerar_resposta(mensagem, current_app.config["DB_PATH"])
+    resposta = gerar_resposta(mensagem, current_app.config["DB_PATH"], sender=sender)
     return jsonify({"reply": resposta})

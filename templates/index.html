@@ -74,9 +74,6 @@
         </div>
 
         <div class="upload-options">
-          <label class="opt-label" for="dayLabel">Rótulo do dia <span class="opt-hint">(ex: D0, D1, D3 — para gráfico temporal)</span></label>
-          <input class="opt-input" type="text" id="dayLabel" placeholder="Opcional" maxlength="20" />
-
           <label class="opt-label" for="confSlider">
             Confiança mínima: <strong id="confValue">25%</strong>
           </label>
@@ -114,6 +111,10 @@
             <div class="mini-metric">
               <span class="mini-val" id="mLeaf">0</span>
               <span class="mini-lbl">Folhas/muda</span>
+            </div>
+            <div class="mini-metric">
+              <span class="mini-val" id="mCells">—</span>
+              <span class="mini-lbl">Células</span>
             </div>
           </div>
           <p class="inference-time" id="inferenceTime"></p>
@@ -179,7 +180,7 @@
         <div class="card-header">
           <div>
             <h2 class="card-title">📈 Evolução Temporal</h2>
-            <p class="card-sub" id="chartSubtitle">Use o campo "Rótulo do dia" ao fazer upload (D0, D1, D2…) para ver a evolução</p>
+            <p class="card-sub" id="chartSubtitle">Faça uploads em dias diferentes para ver a evolução temporal da germinação</p>
           </div>
           <button class="btn-ghost btn-sm" id="refreshChart" type="button">↻ Atualizar</button>
         </div>
@@ -189,7 +190,7 @@
             <div class="chart-empty-inner">
               <div class="chart-empty-icon">📅</div>
               <p class="chart-empty-title">Série temporal vazia</p>
-              <p class="chart-empty-desc">Faça uploads em dias diferentes usando o campo <strong>Rótulo do dia</strong> (D0, D1, D2…) para ver a evolução da germinação ao longo do experimento.</p>
+              <p class="chart-empty-desc">Faça uploads em dias diferentes para ver a evolução da germinação ao longo do experimento.</p>
             </div>
           </div>
         </div>
@@ -223,7 +224,7 @@
         <table class="history-table">
           <thead>
             <tr>
-              <th>#</th><th>Data / Hora</th><th>Arquivo</th><th>Dia</th>
+              <th>#</th><th>Data / Hora</th><th>Arquivo</th>
               <th>Detectadas</th><th>Germinadas</th><th>Taxa</th><th>Folhas</th><th>Resultado</th><th></th>
             </tr>
           </thead>
@@ -239,8 +240,8 @@
 
 <!-- ═══ FOOTER ════════════════════════════════════════════════════════════════ -->
 <footer class="footer">
-  <p>GerminaVision · Sistema de Visão Computacional para Monitoramento de Germinação</p>
-  <p class="footer-sub">Flask · YOLO11 · PyTorch</p>
+  <p>GerminaVision — Sistema de Visão Computacional para Monitoramento de Germinação</p>
+  <p class="footer-sub">Nikolas de Hor · Goiânia, GO · Flask · YOLO11 · PyTorch</p>
 </footer>
 
 <!-- ═══ CHATBOT ═══════════════════════════════════════════════════════════════ -->
@@ -271,7 +272,7 @@
   </div>
 
   <div class="chat-suggestions" id="chatSuggestions">
-    <button class="chip" data-msg="O que significa a classe weak?">muda fraca?</button>
+    <button class="chip" data-msg="Como interpretar a contagem de folhas por planta?">folhas/planta</button>
     <button class="chip" data-msg="Qual minha taxa de germinação?">minha taxa</button>
     <button class="chip" data-msg="Dicas de cultivo">dicas cultivo</button>
     <button class="chip" data-msg="Como funciona o modelo YOLO?">como funciona</button>

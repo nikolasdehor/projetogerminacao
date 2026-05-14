@@ -3,7 +3,9 @@
 // ── State ─────────────────────────────────────────────────────────────────────
 let selectedFile  = null;
 let temporalChart = null;
-const CLASS_COLORS = { seedling:'#34d399', twoseedling:'#10b981', weak:'#fbbf24', noseedling:'#ef4444', processed:'#8b5cf6', askew:'#f97316' };
+const CLASS_COLORS   = { Germinacao:'#34d399', Folha:'#fbbf24' };
+const CLASS_DISPLAY  = { Germinacao: 'Germinação', Folha: 'Folha' };
+const displayClass   = (c) => CLASS_DISPLAY[c] || c;
 
 // ── DOM ───────────────────────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
@@ -94,9 +96,6 @@ async function runAnalysis() {
   const fd = new FormData();
   fd.append('image', selectedFile);
   fd.append('conf',  confSlider.value / 100);
-  const dl = $('dayLabel').value.trim();
-  if (dl) fd.append('day_label', dl);
-
   try {
     setProgress(45, 'Rodando YOLO11…');
     const res  = await fetch('/api/analyze', { method: 'POST', body: fd });
@@ -130,6 +129,14 @@ function renderResult(data) {
   $('mLeaf').textContent      = data.leaf_avg;
   $('inferenceTime').textContent = `⏱ ${data.inference_time_s}s`;
 
+  // Capacidade detectada automaticamente
+  const cellsEl = $('mCells');
+  if (cellsEl) {
+    const cap = data.cells_detected || data.tray_capacity || 200;
+    const isAuto = data.cells_detected && data.cells_detected !== (data.tray_capacity || 200);
+    cellsEl.textContent = cap + (isAuto ? ' (auto)' : '');
+  }
+
   // Detection list
   const list = $('detectionList');
   list.innerHTML = '';
@@ -139,7 +146,7 @@ function renderResult(data) {
     item.className = 'det-item';
     item.innerHTML = `
       <span class="det-dot" style="background:${color}"></span>
-      <span class="det-name ${d.germinated?'det-ok':'det-no'}">${d.class}</span>
+      <span class="det-name ${d.germinated?'det-ok':'det-no'}">${displayClass(d.class)}</span>
       <span class="det-leaves">${d.leaf_count} folha${d.leaf_count!==1?'s':''}</span>
       <span class="det-conf">${(d.confidence*100).toFixed(0)}%</span>`;
     list.appendChild(item);
@@ -194,14 +201,13 @@ function renderHistory(records) {
   $('historyCount').textContent = `${records.length} registro${records.length!==1?'s':''}`;
   const body = $('historyBody');
   if (!records.length) {
-    body.innerHTML = '<tr class="empty-row"><td colspan="10">Nenhuma análise ainda. Faça o primeiro upload! 🌱</td></tr>'; return;
+    body.innerHTML = '<tr class="empty-row"><td colspan="9">Nenhuma análise ainda. Faça o primeiro upload! 🌱</td></tr>'; return;
   }
   body.innerHTML = records.map(r => `
     <tr>
       <td style="font-family:var(--font-mono);color:var(--text-3)">${r.id}</td>
       <td>${formatTs(r.timestamp)}</td>
       <td style="max-width:140px;overflow:hidden;text-overflow:ellipsis" title="${r.filename}">${r.filename}</td>
-      <td>${r.day_label ? `<span class="pill pill-green">${r.day_label}</span>` : '<span style="color:var(--text-3)">—</span>'}</td>
       <td>${r.total_detected}</td>
       <td>${r.germinated}</td>
       <td><span class="pill ${r.germination_rate>=50?'pill-green':'pill-red'}">${r.germination_rate}%</span></td>
