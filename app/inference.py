@@ -109,6 +109,31 @@ def _leaves_inside(folha_boxes: list[tuple[int, int, int, int]], germ_bbox: tupl
     return n
 
 
+def _count_visible_cells(img_bgr: np.ndarray) -> Optional[int]:
+    """Conta células visíveis da bandeja por contornos retangulares."""
+    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+    _, thresh = cv2.threshold(gray, 100, 255, cv2.THRESH_BINARY_INV)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+    closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+    contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    h, w = img_bgr.shape[:2]
+    img_area = float(h * w)
+    valid = []
+    for c in contours:
+        area = cv2.contourArea(c)
+        if not (0.01 * img_area <= area <= 0.20 * img_area):
+            continue
+        cw_box = cv2.boundingRect(c)[2]
+        ch_box = cv2.boundingRect(c)[3]
+        aspect = cw_box / max(ch_box, 1)
+        if not (0.4 < aspect < 2.5):
+            continue
+        hull_area = cv2.contourArea(cv2.convexHull(c))
+        if hull_area > 0 and (area / hull_area) > 0.7:
+            valid.append(c)
+    return len(valid) if valid else None
+
+
 def _estimate_leaves_by_contours(crop_bgr: np.ndarray) -> int:
     """Fallback: estima # de folhas por análise de contornos verdes no crop."""
     if crop_bgr is None or crop_bgr.size == 0:
@@ -273,7 +298,9 @@ def run_inference(
     germinated_count = len(germ_boxes)
     leaves_total = len(folha_boxes)
     total = len(detections)
-    germination_rate = round(germinated_count / TRAY_CAPACITY * 100, 1) if TRAY_CAPACITY > 0 else 0.0
+    detected_cells = _count_visible_cells(img_bgr) or TRAY_CAPACITY
+    detected_cells = max(detected_cells, germinated_count)
+    germination_rate = round(germinated_count / detected_cells * 100, 1) if detected_cells > 0 else 0.0
     leaf_avg = round(sum(leaf_counts) / len(leaf_counts), 1) if leaf_counts else 0.0
     elapsed = round(time.time() - t0, 2)
 
@@ -281,6 +308,7 @@ def run_inference(
         "total_detected":   total,
         "germinated":       germinated_count,
         "germination_rate": germination_rate,
+        "cells_detected":   detected_cells,
         "leaves_total":     leaves_total,
         "leaf_avg":         leaf_avg,
         "leaf_counts":      leaf_counts,
