@@ -142,7 +142,7 @@ def _count_visible_cells(img_bgr: np.ndarray) -> Optional[int]:
 
 
 def _estimate_leaves_by_contours(crop_bgr: np.ndarray) -> int:
-    """Estima folhas via watershed peaks + área verde. Cap 5 (morango D7-D14)."""
+    """Estima folhas via watershed peaks + área verde. Cap 6 (morango D7-D14)."""
     if crop_bgr is None or crop_bgr.size == 0:
         return 0
     hsv = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2HSV)
@@ -156,25 +156,37 @@ def _estimate_leaves_by_contours(crop_bgr: np.ndarray) -> int:
     if green_ratio <= 0.02:
         return 0
 
-    # Distance transform: peaks = centros de folhas individuais
+    # Distance transform: threshold 0.35 (mais permissivo que 0.4, menos que 0.3)
     dist = cv2.distanceTransform(mask, cv2.DIST_L2, 5)
-    _, sure_fg = cv2.threshold(dist, 0.4 * dist.max(), 255, 0)
+    _, sure_fg = cv2.threshold(dist, 0.35 * dist.max(), 255, 0)
     sure_fg = sure_fg.astype(np.uint8)
     num_labels, _ = cv2.connectedComponents(sure_fg)
     n_peaks = max(0, num_labels - 1)  # subtrai background
 
-    # Estimativa por área: 0.12 por folha (conservador vs 0.10 anterior)
-    n_by_area = int(round(green_ratio / 0.12))
+    # Estimativa por área: 0.10 por folha
+    # Nota: quando green_ratio > 0.40, bbox é densa e n_by_area superestima
+    n_by_area = int(round(green_ratio / 0.10))
 
-    # n_peaks confiável só quando > 1 (threshold pode colapsar múltiplos em 1)
-    # Quando peaks=1, usa área como desempate; quando peaks=0 também
     if n_peaks > 1:
-        n_estimated = max(1, min(n_peaks, n_by_area))
+        if green_ratio > 0.40:
+            # bbox densa: área não confiável — peaks é o sinal mais forte
+            n_estimated = n_peaks
+        else:
+            # bbox esparsa: peaks pode ter colapsado, usa o maior
+            n_estimated = max(n_peaks, max(1, n_by_area))
     else:
-        n_estimated = max(1, n_by_area)
+        # 0-1 peak: usa área (peaks provavelmente colapsou múltiplos)
+        if green_ratio > 0.40:
+            n_estimated = max(1, min(n_by_area, 4))  # teto 4 sem peaks confiáveis
+        else:
+            n_estimated = max(1, n_by_area)
 
-    # Cap: morango D7-D14 raramente passa de 5 folhas verdadeiras
-    return min(n_estimated, 5)
+    # Sanity check: >30% verde implica pelo menos 2 folhas
+    if green_ratio >= 0.30:
+        n_estimated = max(n_estimated, 2)
+
+    # Cap: morango D7-D14 com cotilédones pode ter até 6 folhas
+    return min(n_estimated, 6)
 
 
 def run_inference(
