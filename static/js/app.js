@@ -157,9 +157,10 @@ function renderResult(data) {
     const color = CLASS_COLORS[d.class] || '#94a3b8';
     const item = document.createElement('div');
     item.className = 'det-item';
+    const idLabel = d.plant_id ? `#${d.plant_id} · ` : '';
     item.innerHTML = `
       <span class="det-dot" style="background:${color}"></span>
-      <span class="det-name ${d.germinated?'det-ok':'det-no'}">${displayClass(d.class)}</span>
+      <span class="det-name ${d.germinated?'det-ok':'det-no'}">${idLabel}${displayClass(d.class)}</span>
       <span class="det-leaves">${d.leaf_count} folha${d.leaf_count!==1?'s':''}</span>
       <span class="det-conf">${(d.confidence*100).toFixed(0)}%</span>`;
     list.appendChild(item);

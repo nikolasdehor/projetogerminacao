@@ -251,13 +251,23 @@ def run_inference(
         elif cls_name == LEAF_CLASS:
             folha_boxes.append(bbox)
 
-    raw_boxes_for_loop = clamped_boxes
+    # Ordena clamped_boxes: Germinacao top-down, left-right (centro y depois x)
+    # Folhas ficam no final (não recebem plant_id)
+    def _sort_key(item):
+        cls_name, conf, bbox = item
+        cx = (bbox[0] + bbox[2]) // 2
+        cy = (bbox[1] + bbox[3]) // 2
+        is_germ = 0 if cls_name in GERMINATION_CLASSES else 1
+        return (is_germ, cy, cx)
+
+    raw_boxes_for_loop = sorted(clamped_boxes, key=_sort_key)
 
     # Segundo passe: anota e calcula folhas por germinação via containment
     leaf_counts: list[int] = []
     detections: list[dict] = []
     scale = max(0.4, min(w, h) / 1200)
     thickness = max(1, int(scale * 2))
+    plant_id = 0
 
     for cls_name, conf, bbox in raw_boxes_for_loop:
         x1, y1, x2, y2 = bbox
@@ -265,22 +275,26 @@ def run_inference(
         color_bgr = (color[2], color[1], color[0])
 
         if cls_name in GERMINATION_CLASSES:
+            plant_id += 1
             leaf_n = _leaves_inside(folha_boxes, bbox)
             # Fallback: modelo não detectou Folhas via YOLO — estima por contornos verdes
             if leaf_n == 0:
                 crop = img_bgr[y1:y2, x1:x2]
                 leaf_n = _estimate_leaves_by_contours(crop)
             leaf_counts.append(leaf_n)
-            label = f"Germinacao {conf:.0%} | {leaf_n} folhas"
+            label = f"#{plant_id} Germ {conf:.0%} | {leaf_n}f"
             germinated = True
+            pid: Optional[int] = plant_id
         elif cls_name == LEAF_CLASS:
             leaf_n = 1
             label = f"Folha {conf:.0%}"
             germinated = False
+            pid = None
         else:
             leaf_n = 0
             label = f"{cls_name} {conf:.0%}"
             germinated = False
+            pid = None
 
         cv2.rectangle(img_annotated, (x1, y1), (x2, y2), color_bgr, thickness)
         (lw, lh), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, scale, thickness)
@@ -295,6 +309,7 @@ def run_inference(
             "bbox":       [x1, y1, x2, y2],
             "germinated": germinated,
             "leaf_count": leaf_n,
+            "plant_id":   pid,
         })
 
     # Salva imagem anotada

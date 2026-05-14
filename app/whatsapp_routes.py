@@ -318,6 +318,13 @@ def _handle_image_message(client, sender: str, payload: dict):
             label = class_display.get(cls, cls)
             texto += f"  {emoji_cls} {label}: {count}\n"
 
+    plantas = [d for d in result["detections"] if d.get("plant_id")]
+    if plantas:
+        texto += "\n🌱 *Por planta:*\n"
+        for p in sorted(plantas, key=lambda x: x["plant_id"]):
+            folhas = p["leaf_count"]
+            texto += f"  #{p['plant_id']}: {folhas} folha{'s' if folhas != 1 else ''} ({p['confidence']*100:.0f}%)\n"
+
     # Envia a imagem resultado com legenda
     result_image_path = Path(current_app.root_path).parent / result["result_image"].lstrip("/")
     if result_image_path.exists():
