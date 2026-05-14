@@ -123,7 +123,6 @@ def analyze():
     result["id"]        = record_id
     result["filename"]  = file.filename
     result["day_label"] = day_label
-    result["total_folhas_estimadas"] = int(round(result["leaf_avg"] * result["germinated"]))
     return jsonify(result)
 
 

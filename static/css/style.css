@@ -99,6 +99,7 @@ button { cursor: pointer; font-family: inherit; }
 .big-metric { background: var(--bg-2); border-radius: var(--radius); padding: 1.25rem; border: 1px solid var(--border); }
 .big-val { display: block; font-size: 2.8rem; font-weight: 800; font-family: var(--font-mono); background: linear-gradient(135deg, var(--green-300), var(--teal)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; line-height: 1; margin-bottom: 4px; }
 .big-lbl { font-size: 0.78rem; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.06em; }
+.big-sub { display: block; font-size: 0.72rem; color: var(--text-3); margin-top: 2px; }
 .big-bar { height: 6px; background: rgba(255,255,255,0.06); border-radius: 100px; margin-top: 0.75rem; overflow: hidden; }
 .big-bar-fill { height: 100%; background: linear-gradient(90deg, var(--green-500), var(--teal)); border-radius: 100px; transition: width 0.8s ease; width: 0%; }
 .metrics-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.6rem; }
@@ -241,5 +242,9 @@ button { cursor: pointer; font-family: inherit; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
 .fade-in { animation: fadeIn 0.4s ease forwards; }
-\n.chat-bubble h1, .chat-bubble h2, .chat-bubble h3 { font-size: 1.05rem; margin: 0.5rem 0; color: var(--green-300); }\n.chat-bubble p { margin-bottom: 0.5rem; }\n.chat-bubble ul, .chat-bubble ol { margin-left: 1.2rem; margin-bottom: 0.5rem; }\n.chat-bubble li { margin-bottom: 0.2rem; }
-\n.chat-bubble { overflow-x: auto; }
+
+.chat-bubble h1, .chat-bubble h2, .chat-bubble h3 { font-size: 1.05rem; margin: 0.5rem 0; color: var(--green-300); }
+.chat-bubble p { margin-bottom: 0.5rem; }
+.chat-bubble ul, .chat-bubble ol { margin-left: 1.2rem; margin-bottom: 0.5rem; }
+.chat-bubble li { margin-bottom: 0.2rem; }
+.chat-bubble { overflow-x: auto; }

@@ -124,6 +124,11 @@ function renderResult(data) {
   $('metricsSide').hidden = false;
   $('mRate').textContent      = data.germination_rate + '%';
   $('mRateBar').style.width   = data.germination_rate + '%';
+  const mRateSub = $('mRateSub');
+  if (mRateSub) {
+    const cap = data.cells_detected || data.tray_capacity || 200;
+    mRateSub.textContent = `${data.germinated} de ${cap} células`;
+  }
   $('mTotal').textContent     = data.total_detected;
   $('mGerminated').textContent= data.germinated;
   $('mLeaf').textContent      = data.leaf_avg;
