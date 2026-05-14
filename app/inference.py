@@ -114,10 +114,17 @@ def _estimate_leaves_by_contours(crop_bgr: np.ndarray) -> int:
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    min_area = (crop_bgr.shape[0] * crop_bgr.shape[1]) * 0.005
-    valid = [c for c in contours if cv2.contourArea(c) >= min_area]
-    return max(1, len(valid)) if valid else 0
+    # Erosão extra para separar folhas que se tocam
+    mask_eroded = cv2.erode(mask, kernel, iterations=2)
+    contours, _ = cv2.findContours(mask_eroded, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    crop_area = float(crop_bgr.shape[0] * crop_bgr.shape[1])
+    min_area = crop_area * 0.005
+    n_contours = len([c for c in contours if cv2.contourArea(c) >= min_area])
+    # Estimativa complementar por área: morango D7-D14 cada folha cobre ~10% do bbox
+    green_ratio = float(cv2.countNonZero(mask)) / max(crop_area, 1)
+    n_by_area = int(round(green_ratio / 0.10))
+    n_estimated = max(n_contours, n_by_area)
+    return max(1, min(n_estimated, 8)) if green_ratio > 0.03 else 0
 
 
 def run_inference(
