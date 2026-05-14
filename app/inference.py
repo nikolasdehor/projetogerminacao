@@ -55,7 +55,7 @@ def _get_sahi_model(model_path: str):
         _SAHI_MODEL = AutoDetectionModel.from_pretrained(
             model_type="ultralytics",
             model_path=model_path,
-            confidence_threshold=0.20,
+            confidence_threshold=0.15,
             device="cpu",
         )
     return _SAHI_MODEL
@@ -66,15 +66,20 @@ def _run_inference_sahi(
     model_path: str,
     names: dict,
 ) -> list[dict]:
+    import cv2 as _cv2
+    _img = _cv2.imread(str(img_path))
+    _h, _w = _img.shape[:2] if _img is not None else (512, 512)
+    # Tiles adaptivos: ~metade da menor dimensão para garantir fatiamento real
+    tile = max(192, min(_h, _w) // 2)
     sahi_model = _get_sahi_model(model_path)
     sliced = get_sliced_prediction(
         image=str(img_path),
         detection_model=sahi_model,
-        slice_height=768,
-        slice_width=1024,
-        overlap_height_ratio=0.2,
-        overlap_width_ratio=0.2,
-        postprocess_match_threshold=0.5,
+        slice_height=tile,
+        slice_width=tile,
+        overlap_height_ratio=0.3,
+        overlap_width_ratio=0.3,
+        postprocess_match_threshold=0.4,
         verbose=0,
     )
     detections = []
@@ -146,7 +151,7 @@ def run_inference(
         img_bgr = cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
 
     h, w = img_bgr.shape[:2]
-    use_sahi = _SAHI_AVAILABLE and min(h, w) >= 900
+    use_sahi = _SAHI_AVAILABLE and min(h, w) >= 400
     print(f"  Inferencia {'SAHI (tiles)' if use_sahi else 'direta'} em {w}x{h}")
 
     # raw_boxes: lista uniforme de dicts {cls_name, conf, bbox}
@@ -157,16 +162,17 @@ def run_inference(
         fallback_names = {0: "Germinacao", 1: "Folha"}
         names = class_names or fallback_names
         raw_boxes = _run_inference_sahi(img_path, model_path, names)
-        # Filtro class-aware: Folha aceita conf 0.10 abaixo do threshold
+        # Filtro class-aware: Germinacao aceita -0.07, Folha aceita -0.10
+        germ_conf = max(0.15, conf_threshold - 0.07)
         folha_conf = max(0.15, conf_threshold - 0.10)
         raw_boxes = [
             d for d in raw_boxes
-            if (d["cls_name"] == "Germinacao" and d["conf"] >= conf_threshold)
+            if (d["cls_name"] == "Germinacao" and d["conf"] >= germ_conf)
             or (d["cls_name"] == "Folha" and d["conf"] >= folha_conf)
             or (d["cls_name"] not in ("Germinacao", "Folha") and d["conf"] >= conf_threshold)
         ]
     else:
-        # Usa conf mais baixo no predict para capturar Folhas; filtra class-aware depois
+        # Usa conf mais baixo no predict para capturar Germinacoes e Folhas periféricas
         folha_conf = max(0.15, conf_threshold - 0.10)
         results = model.predict(
             source=str(img_path),
@@ -183,10 +189,11 @@ def run_inference(
             xyxy = box.xyxy[0].cpu().numpy().astype(int)
             x1, y1, x2, y2 = [int(v) for v in xyxy]
             raw_boxes.append({"cls_name": cls_name, "conf": conf, "bbox": (x1, y1, x2, y2)})
-        # Filtro class-aware: Germinacao precisa de conf_threshold normal
+        # Filtro class-aware: Germinacao aceita -0.07, Folha aceita -0.10
+        germ_conf = max(0.15, conf_threshold - 0.07)
         raw_boxes = [
             d for d in raw_boxes
-            if (d["cls_name"] == "Germinacao" and d["conf"] >= conf_threshold)
+            if (d["cls_name"] == "Germinacao" and d["conf"] >= germ_conf)
             or (d["cls_name"] == "Folha" and d["conf"] >= folha_conf)
             or (d["cls_name"] not in ("Germinacao", "Folha") and d["conf"] >= conf_threshold)
         ]
