@@ -103,6 +103,21 @@ class EvolutionClient:
             "text": text,
         })
 
+    def send_presence(self, to: str, presence: str = "composing", delay_ms: int = 1200) -> dict:
+        """
+        Envia indicador de presença ("digitando..." aparece no WhatsApp do destinatário).
+        presence: 'composing' (digitando), 'recording' (gravando áudio), 'paused' (parou), 'available' (online).
+        Falha silenciosamente para não interromper a resposta principal.
+        """
+        try:
+            return self._request("POST", f"/chat/sendPresence/{self.instance_name}", {
+                "number": to,
+                "delay": delay_ms,
+                "presence": presence,
+            })
+        except RuntimeError:
+            return {}
+
     def send_image(self, to: str, image_url: str, caption: str = "") -> dict:
         """Envia imagem com legenda. `image_url` deve ser URL pública da imagem."""
         return self._request("POST", f"/message/sendMedia/{self.instance_name}", {
@@ -127,40 +142,74 @@ class EvolutionClient:
     def download_media(self, message_data: dict, save_dir: str) -> Optional[str]:
         """
         Baixa mídia (imagem) de uma mensagem recebida pelo webhook.
-        Retorna o caminho do arquivo salvo, ou None se não for mídia.
+        Tenta 3 fluxos em ordem: base64 no webhook → getBase64FromMediaMessage → URL direta.
+        Retorna o caminho do arquivo salvo, ou None se falhar.
         """
-        # Tenta extrair base64 do corpo do webhook
+        import base64 as b64
+        import uuid
+
         msg = message_data.get("data", {}).get("message", {})
         image_msg = msg.get("imageMessage") or msg.get("documentMessage") or {}
-
-        # Se veio base64 no webhook
-        base64_data = message_data.get("data", {}).get("message", {}).get("base64")
-        if not base64_data:
-            # Tenta via media_url da Evolution API
-            media_url = image_msg.get("url") or image_msg.get("directPath")
-            if not media_url:
-                return None
-
-            # Baixa a mídia via URL
-            try:
-                media_key = message_data.get("data", {}).get("key", {}).get("id", "unknown")
-                req = urllib.request.Request(media_url)
-                with urllib.request.urlopen(req, timeout=30) as resp:
-                    raw = resp.read()
-            except Exception:
-                return None
-        else:
-            import base64 as b64
-            try:
-                raw = b64.b64decode(base64_data)
-            except Exception:
-                return None
-
-        # Salva no disco
-        import uuid
         ext = image_msg.get("mimetype", "image/jpeg").split("/")[-1]
         if ext not in ("jpeg", "jpg", "png", "webp"):
             ext = "jpg"
+
+        raw: Optional[bytes] = None
+
+        # Fluxo 1: base64 enviado diretamente no webhook (requer base64:true na config)
+        base64_data = msg.get("base64") or message_data.get("data", {}).get("message", {}).get("base64")
+        if base64_data:
+            # Remove prefixo data:image/...;base64, se presente
+            if "," in base64_data:
+                base64_data = base64_data.split(",", 1)[1]
+            try:
+                raw = b64.b64decode(base64_data)
+            except Exception:
+                raw = None
+
+        # Fluxo 2: buscar base64 via endpoint da Evolution API
+        if not raw:
+            try:
+                key = message_data.get("data", {}).get("key", {})
+                resp = self._request(
+                    "POST",
+                    f"/chat/getBase64FromMediaMessage/{self.instance_name}",
+                    {"message": {"key": key}},
+                )
+                b64_str = resp.get("base64", "")
+                if b64_str:
+                    if "," in b64_str:
+                        b64_str = b64_str.split(",", 1)[1]
+                    raw = b64.b64decode(b64_str)
+            except Exception:
+                raw = None
+
+        # Fluxo 3: download direto via URL (com apikey no header)
+        if not raw:
+            media_url = image_msg.get("url") or image_msg.get("directPath")
+            if media_url:
+                try:
+                    req = urllib.request.Request(media_url, headers={"apikey": self.api_key})
+                    with urllib.request.urlopen(req, timeout=30) as resp:
+                        raw = resp.read()
+                except Exception:
+                    raw = None
+
+        if not raw:
+            return None
+
+        # Valida magic bytes antes de salvar
+        _VALID_MAGIC = (b"\xff\xd8", b"\x89PNG", b"GIF8", b"RIFF", b"WEBP")
+        if not any(raw[:4].startswith(m) for m in _VALID_MAGIC):
+            return None
+
+        # Confirma com PIL
+        try:
+            from PIL import Image
+            Image.open(io.BytesIO(raw)).verify()
+        except Exception:
+            return None
+
         filename = f"wa_{uuid.uuid4().hex[:12]}.{ext}"
         save_path = Path(save_dir) / filename
         save_path.write_bytes(raw)
