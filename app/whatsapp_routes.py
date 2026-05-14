@@ -253,7 +253,7 @@ def _handle_image_message(client, sender: str, payload: dict):
             image_path=image_path,
             model=current_app.config["MODEL"],
             result_folder=result_dir,
-            conf_threshold=0.25,
+            conf_threshold=0.5,
         )
     except Exception as e:
         client.send_text(sender, f"❌ Erro na análise: {e}")
