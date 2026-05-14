@@ -98,7 +98,7 @@
       <line x1="95" y1="135" x2="135" y2="135" stroke="#34d399" stroke-width="1" stroke-opacity="0.25" />
       <circle cx="115" cy="135" r="3" fill="none" stroke="#34d399" stroke-width="1" stroke-opacity="0.3" />
 
-      <!-- Beautiful seedling illustration -->
+      <!-- Ilustracao de muda germinada -->
       <g transform="translate(115, 135)">
         <!-- Stem -->
         <path d="M0 20 C0 15 -2 5 0 -15 C2 5 0 15 0 20" fill="#4ade80" opacity="0.9" />
@@ -127,7 +127,7 @@
       <!-- YOLO-style label -->
       <g>
         <rect x="0" y="-38" width="150" height="30" fill="#10b981" rx="6" filter="url(#neonSubtle)" />
-        <text x="12" y="-18" fill="#021a0e" font-family="'SF Mono', 'Fira Code', 'Cascadia Code', monospace" font-size="14" font-weight="700" letter-spacing="0.5">seedling 0.98</text>
+        <text x="12" y="-18" fill="#021a0e" font-family="'SF Mono', 'Fira Code', 'Cascadia Code', monospace" font-size="14" font-weight="700" letter-spacing="0.5">Germinacao 0.98</text>
       </g>
 
       <!-- Secondary label -->

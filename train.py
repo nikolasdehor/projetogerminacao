@@ -10,7 +10,7 @@ import torch
 
 # ── Caminhos ──────────────────────────────────────────────────────────────────
 BASE       = Path(__file__).parent
-DATASET    = BASE / "seedling.v1i.yolov8"
+DATASET    = BASE / "dataset"
 DATA_YAML  = DATASET / "data.yaml"
 FIXED_YAML = BASE / "data_train.yaml"
 MODEL_DIR  = BASE / "models"
@@ -56,21 +56,27 @@ print(f"   Device  : {DEVICE}\n")
 # ── Treino ────────────────────────────────────────────────────────────────────
 from ultralytics import YOLO
 
-model = YOLO("yolo11s.pt")
+LAST_PT = BASE / "runs" / "morango_v2" / "weights" / "last.pt"
+if LAST_PT.exists():
+    model = YOLO(str(LAST_PT))
+    print(f"🔁  Retomando treino a partir de: {LAST_PT}")
+else:
+    model = YOLO("yolo11s.pt")
 
 print("🚀  Iniciando treino…")
 results = model.train(
     data=str(FIXED_YAML),
     epochs=100,
-    imgsz=640,
-    batch=4,           # reduzido ainda mais (evita zsh: killed por falta de RAM)
+    imgsz=896,
+    batch=2,
     patience=15,
     device=DEVICE,
-    workers=0,         # 0 desativa multiprocessamento que consome muita RAM no Mac
+    workers=0,
     project=str(BASE / "runs"),
-    name="seedling_local",
+    name="morango_v2",
     exist_ok=True,
-    cache=False,       # evita consumo excessivo de RAM
+    cache=False,
+    resume=LAST_PT.exists(),
 )
 
 # ── Copia best.pt para models/ ────────────────────────────────────────────────
