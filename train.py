@@ -56,10 +56,10 @@ print(f"   Device  : {DEVICE}\n")
 # ── Treino ────────────────────────────────────────────────────────────────────
 from ultralytics import YOLO
 
-LAST_PT = BASE / "runs" / "morango_v2" / "weights" / "last.pt"
-if LAST_PT.exists():
-    model = YOLO(str(LAST_PT))
-    print(f"🔁  Retomando treino a partir de: {LAST_PT}")
+BEST_PT = BASE / "models" / "best.pt"
+if BEST_PT.exists():
+    model = YOLO(str(BEST_PT))
+    print(f"🔁  Iniciando fine-tune a partir de: {BEST_PT}")
 else:
     model = YOLO("yolo11s.pt")
 
@@ -76,7 +76,7 @@ results = model.train(
     name="morango_v2",
     exist_ok=True,
     cache=False,
-    resume=LAST_PT.exists(),
+    resume=False,
     # augmentation para luz LED grow (amarelo/verde/azul/vermelho)
     hsv_h=0.5,
     hsv_s=0.9,
