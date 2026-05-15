@@ -77,6 +77,10 @@ results = model.train(
     exist_ok=True,
     cache=False,
     resume=LAST_PT.exists(),
+    # augmentation para luz LED grow (amarelo/verde/azul/vermelho)
+    hsv_h=0.5,
+    hsv_s=0.9,
+    hsv_v=0.5,
 )
 
 # ── Copia best.pt para models/ ────────────────────────────────────────────────
