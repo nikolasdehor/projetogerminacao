@@ -4,7 +4,6 @@ from __future__ import annotations
 import base64
 import json
 import os
-import re
 import time as _time
 import traceback
 from pathlib import Path
@@ -14,34 +13,9 @@ from flask import (
 )
 
 from app.whatsapp import get_client
+from app.inference import parse_caption as _parse_caption
 
 wp = Blueprint("whatsapp", __name__)
-
-_CAPTION_CAPACITY_RE = re.compile(r"\b([1-9]\d{1,2})\b")  # 10-999, filtra depois por 12-500
-
-
-def _parse_caption(raw: str | None) -> tuple[str | None, int | None]:
-    """Retorna (caption_sanitizada, capacidade_extraida_ou_None).
-
-    Capacidade: primeiro número entre 12 e 500 encontrado na caption.
-    Caption: limitada a 100 chars, sem caracteres de controle.
-    """
-    if not raw:
-        return None, None
-
-    # Remove caracteres de controle (exceto espaço/newline normais) e normaliza espaços
-    caption = re.sub(r"[^\x20-\x7EÀ-ɏЀ-ӿ\n\r]", "", raw)
-    caption = " ".join(caption.split())[:100].strip() or None
-
-    capacity: int | None = None
-    if raw:
-        for m in _CAPTION_CAPACITY_RE.finditer(raw):
-            n = int(m.group(1))
-            if 12 <= n <= 500:
-                capacity = n
-                break
-
-    return caption, capacity
 
 
 def _extract_quoted_text(msg: dict) -> str | None:

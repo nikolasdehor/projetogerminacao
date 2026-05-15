@@ -17,7 +17,7 @@ import sqlite3
 from app.database import (
     count_analyses, delete_analysis, get_history, get_temporal_series, insert_analysis
 )
-from app.inference import run_inference
+from app.inference import run_inference, parse_caption
 
 bp = Blueprint("main", __name__)
 
@@ -82,6 +82,10 @@ def analyze():
         return jsonify({"error": "Tipo de arquivo inválido. Use PNG, JPG ou WEBP."}), 400
 
     day_label = request.form.get("day_label", "").strip() or None
+    raw_caption = request.form.get("caption", "").strip() or day_label or None
+    caption_text, tray_capacity_override = parse_caption(raw_caption)
+    # day_label: caption sanitizada tem prioridade, senão usa day_label original
+    effective_label = caption_text or day_label
 
     # Salva upload
     safe_name = secure_filename(file.filename)
@@ -101,6 +105,7 @@ def analyze():
             model=current_app.config["MODEL"],
             result_folder=current_app.config["RESULT_FOLDER"],
             conf_threshold=float(request.form.get("conf", 0.25)),
+            tray_capacity_override=tray_capacity_override,
         )
     except Exception as exc:
         return jsonify({"error": f"Erro na inferência: {exc}"}), 500
@@ -115,15 +120,17 @@ def analyze():
             germination_rate=result["germination_rate"],
             leaf_avg=result["leaf_avg"],
             result_image=result["result_image"],
-            day_label=day_label,
+            day_label=effective_label,
             source="web",
+            caption=caption_text,
         )
     except Exception as exc:
         return jsonify({"error": f"Erro ao gravar no banco: {exc}"}), 500
 
     result["id"]        = record_id
     result["filename"]  = file.filename
-    result["day_label"] = day_label
+    result["day_label"] = effective_label
+    result["caption"]   = caption_text
     return jsonify(result)
 
 

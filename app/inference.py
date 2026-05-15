@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 import uuid
 from pathlib import Path
@@ -19,6 +20,30 @@ except ImportError:
     _SAHI_AVAILABLE = False
 
 _SAHI_MODEL = None  # lazy init
+
+
+# ── Caption parsing (compartilhado entre UI web e WhatsApp) ──────────────────
+
+_CAPTION_CAPACITY_RE = re.compile(r"\b([1-9]\d{1,2})\b")
+
+
+def parse_caption(raw: str | None) -> tuple[str | None, int | None]:
+    """Retorna (caption_sanitizada, capacidade_ou_None).
+
+    Capacidade: primeiro número entre 12 e 500 na caption.
+    Caption: limitada a 100 chars, sem caracteres de controle.
+    """
+    if not raw:
+        return None, None
+    caption = re.sub(r"[^\x20-\x7EÀ-ɏЀ-ӿ\n\r]", "", raw)
+    caption = " ".join(caption.split())[:100].strip() or None
+    capacity: int | None = None
+    for m in _CAPTION_CAPACITY_RE.finditer(raw):
+        n = int(m.group(1))
+        if 12 <= n <= 500:
+            capacity = n
+            break
+    return caption, capacity
 
 
 # ── Normalização de iluminação ───────────────────────────────────────────────
