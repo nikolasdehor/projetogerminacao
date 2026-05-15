@@ -144,7 +144,8 @@ def get_history(db_path: str, limit: int = 20, offset: int = 0) -> list[dict]:
         rows = conn.execute(
             """SELECT id, timestamp, filename, total_detected, germinated, germination_rate,
                       leaf_avg, result_image, day_label, analysis_summary, caption,
-                      CASE WHEN filename LIKE 'wa_%' OR filename LIKE 'whatsapp_%' THEN 'whatsapp'
+                      CASE WHEN filename LIKE 'whatsapp_%' THEN 'whatsapp'
+                           WHEN sender IS NOT NULL AND sender != '' THEN 'whatsapp'
                            WHEN source IS NOT NULL THEN source
                            ELSE 'web' END AS source,
                       CASE WHEN sender IS NOT NULL AND sender != '' THEN sender
