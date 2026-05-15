@@ -21,6 +21,30 @@ except ImportError:
 _SAHI_MODEL = None  # lazy init
 
 
+# ── Normalização de iluminação ───────────────────────────────────────────────
+
+def _normalize_lighting(img_bgr: np.ndarray) -> np.ndarray:
+    """White balance (Gray World) + CLAHE no canal L para robustez a LED colorido."""
+    # Gray World white balance
+    b, g, r = cv2.split(img_bgr.astype(np.float32))
+    mean_b, mean_g, mean_r = b.mean(), g.mean(), r.mean()
+    mean_gray = (mean_b + mean_g + mean_r) / 3.0
+    if mean_b > 1 and mean_g > 1 and mean_r > 1:
+        b = np.clip(b * (mean_gray / mean_b), 0, 255)
+        g = np.clip(g * (mean_gray / mean_g), 0, 255)
+        r = np.clip(r * (mean_gray / mean_r), 0, 255)
+    balanced = cv2.merge([b, g, r]).astype(np.uint8)
+
+    # CLAHE no canal L (Lab) para realçar contraste sem saturar cor
+    lab = cv2.cvtColor(balanced, cv2.COLOR_BGR2Lab)
+    l_ch, a_ch, b_ch = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    l_ch = clahe.apply(l_ch)
+    result = cv2.cvtColor(cv2.merge([l_ch, a_ch, b_ch]), cv2.COLOR_Lab2BGR)
+    print("  Normalização de iluminação aplicada (Gray World + CLAHE)")
+    return result
+
+
 # ── Config de classes ────────────────────────────────────────────────────────
 # Dataset morango v2: 2 classes (Germinacao = planta germinada, Folha = folha individual)
 CLASS_COLORS = {
@@ -146,7 +170,7 @@ def _estimate_leaves_by_contours(crop_bgr: np.ndarray) -> int:
     if crop_bgr is None or crop_bgr.size == 0:
         return 0
     hsv = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2HSV)
-    mask = cv2.inRange(hsv, (25, 30, 30), (85, 255, 255))
+    mask = cv2.inRange(hsv, (15, 20, 20), (95, 255, 255))
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
@@ -230,49 +254,63 @@ def run_inference(
     use_sahi = _SAHI_AVAILABLE and min(h, w) >= 400
     print(f"  Inferencia {'SAHI (tiles)' if use_sahi else 'direta'} em {w}x{h}")
 
+    # Normaliza iluminação para inferência (original preservado para anotação visual)
+    img_for_inference = _normalize_lighting(img_bgr)
+
+    # Salva imagem normalizada em arquivo temporário para SAHI (que exige path)
+    norm_path = img_path.with_name(f"_norm_{img_path.name}")
+    cv2.imwrite(str(norm_path), img_for_inference)
+
     # raw_boxes: lista uniforme de dicts {cls_name, conf, bbox}
     raw_boxes: list[dict] = []
 
-    if use_sahi:
-        model_path = str(getattr(model, "ckpt_path", "") or "models/best.pt")
-        fallback_names = {0: "Germinacao", 1: "Folha"}
-        names = class_names or fallback_names
-        raw_boxes = _run_inference_sahi(img_path, model_path, names)
-        # Filtro class-aware: Germinacao aceita -0.07, Folha aceita -0.10
-        germ_conf = max(0.15, conf_threshold - 0.07)
-        folha_conf = max(0.15, conf_threshold - 0.10)
-        raw_boxes = [
-            d for d in raw_boxes
-            if (d["cls_name"] == "Germinacao" and d["conf"] >= germ_conf)
-            or (d["cls_name"] == "Folha" and d["conf"] >= folha_conf)
-            or (d["cls_name"] not in ("Germinacao", "Folha") and d["conf"] >= conf_threshold)
-        ]
-    else:
-        # Usa conf mais baixo no predict para capturar Germinacoes e Folhas periféricas
-        folha_conf = max(0.15, conf_threshold - 0.10)
-        results = model.predict(
-            source=str(img_path),
-            conf=folha_conf,
-            imgsz=1280,
-            verbose=False,
-        )
-        result = results[0]
-        names = class_names or result.names
-        for box in result.boxes:
-            cls_id = int(box.cls[0])
-            conf = float(box.conf[0])
-            cls_name = names[cls_id] if isinstance(names, dict) else str(cls_id)
-            xyxy = box.xyxy[0].cpu().numpy().astype(int)
-            x1, y1, x2, y2 = [int(v) for v in xyxy]
-            raw_boxes.append({"cls_name": cls_name, "conf": conf, "bbox": (x1, y1, x2, y2)})
-        # Filtro class-aware: Germinacao aceita -0.07, Folha aceita -0.10
-        germ_conf = max(0.15, conf_threshold - 0.07)
-        raw_boxes = [
-            d for d in raw_boxes
-            if (d["cls_name"] == "Germinacao" and d["conf"] >= germ_conf)
-            or (d["cls_name"] == "Folha" and d["conf"] >= folha_conf)
-            or (d["cls_name"] not in ("Germinacao", "Folha") and d["conf"] >= conf_threshold)
-        ]
+    try:
+        if use_sahi:
+            model_path = str(getattr(model, "ckpt_path", "") or "models/best.pt")
+            fallback_names = {0: "Germinacao", 1: "Folha"}
+            names = class_names or fallback_names
+            raw_boxes = _run_inference_sahi(norm_path, model_path, names)
+            # Filtro class-aware: Germinacao aceita -0.07, Folha aceita -0.10
+            germ_conf = max(0.15, conf_threshold - 0.07)
+            folha_conf = max(0.15, conf_threshold - 0.10)
+            raw_boxes = [
+                d for d in raw_boxes
+                if (d["cls_name"] == "Germinacao" and d["conf"] >= germ_conf)
+                or (d["cls_name"] == "Folha" and d["conf"] >= folha_conf)
+                or (d["cls_name"] not in ("Germinacao", "Folha") and d["conf"] >= conf_threshold)
+            ]
+        else:
+            # Usa conf mais baixo no predict para capturar Germinacoes e Folhas periféricas
+            folha_conf = max(0.15, conf_threshold - 0.10)
+            results = model.predict(
+                source=img_for_inference,
+                conf=folha_conf,
+                imgsz=1280,
+                verbose=False,
+            )
+            result = results[0]
+            names = class_names or result.names
+            for box in result.boxes:
+                cls_id = int(box.cls[0])
+                conf = float(box.conf[0])
+                cls_name = names[cls_id] if isinstance(names, dict) else str(cls_id)
+                xyxy = box.xyxy[0].cpu().numpy().astype(int)
+                x1, y1, x2, y2 = [int(v) for v in xyxy]
+                raw_boxes.append({"cls_name": cls_name, "conf": conf, "bbox": (x1, y1, x2, y2)})
+            # Filtro class-aware: Germinacao aceita -0.07, Folha aceita -0.10
+            germ_conf = max(0.15, conf_threshold - 0.07)
+            raw_boxes = [
+                d for d in raw_boxes
+                if (d["cls_name"] == "Germinacao" and d["conf"] >= germ_conf)
+                or (d["cls_name"] == "Folha" and d["conf"] >= folha_conf)
+                or (d["cls_name"] not in ("Germinacao", "Folha") and d["conf"] >= conf_threshold)
+            ]
+    finally:
+        # Remove arquivo temporário normalizado
+        try:
+            norm_path.unlink(missing_ok=True)
+        except Exception:
+            pass
 
     img_annotated = img_bgr.copy()
 
