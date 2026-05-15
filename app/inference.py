@@ -258,8 +258,10 @@ def _resolve_cell_count(
         return tray_capacity_override, "caption"
 
     # 2. Valida detecção automática: descarta se anômala
+    # mínimo = max(12, plants*3): bandeja comercial menor tem 12 células,
+    # e células detectadas devem ser ao menos 3x as plantas (taxa máx ~33%)
     if raw_detected is not None:
-        min_plausible = max(4, int(germinated_count * 1.5))
+        min_plausible = max(12, int(germinated_count * 3))
         if min_plausible <= raw_detected <= 500:
             _cell_detection_stats["success"] += 1
             return max(raw_detected, germinated_count), "detected"
