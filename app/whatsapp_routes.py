@@ -4,9 +4,13 @@ from __future__ import annotations
 import base64
 import json
 import os
+import threading
 import time as _time
 import traceback
+from collections import deque
 from pathlib import Path
+
+_seen_msg_ids: deque[str] = deque(maxlen=500)
 
 from flask import (
     Blueprint, current_app, jsonify, render_template, request
@@ -161,17 +165,21 @@ def whatsapp_webhook():
     print(f"📱 Webhook recebido: {event}")
 
     if event in ("MESSAGES.UPSERT", "MESSAGES_UPSERT"):
-        try:
-            _handle_message(payload)
-        except Exception as e:
-            print(f"❌ Erro ao processar mensagem WhatsApp: {e}")
-            traceback.print_exc()
+        app = current_app._get_current_object()
+        def _process():
+            try:
+                with app.app_context():
+                    _handle_message(payload)
+            except Exception as e:
+                print(f"❌ Erro ao processar mensagem WhatsApp: {e}")
+                traceback.print_exc()
+        threading.Thread(target=_process, daemon=True).start()
 
     elif event in ("CONNECTION.UPDATE", "CONNECTION_UPDATE"):
         state = payload.get("data", {}).get("state", "unknown")
         print(f"📱 WhatsApp conexão: {state}")
 
-    # Sempre retorna 200 para a Evolution API não reenviar
+    # Retorna 200 imediatamente para a Evolution API não reenviar por timeout
     return jsonify({"received": True}), 200
 
 
@@ -187,6 +195,14 @@ def _handle_message(payload: dict):
     # Ignora mensagens enviadas por nós mesmos
     if key.get("fromMe", False):
         return
+
+    # Dedup: descarta reentregas do mesmo webhook pela Evolution API
+    msg_id = key.get("id", "")
+    if msg_id:
+        if msg_id in _seen_msg_ids:
+            print(f"⚠️ Mensagem duplicada ignorada: {msg_id}")
+            return
+        _seen_msg_ids.append(msg_id)
 
     remote_jid = key.get("remoteJid", "")
     # Extrai número limpo (5511999999999)
