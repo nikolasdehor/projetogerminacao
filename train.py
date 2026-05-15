@@ -56,8 +56,12 @@ print(f"   Device  : {DEVICE}\n")
 # ── Treino ────────────────────────────────────────────────────────────────────
 from ultralytics import YOLO
 
+LAST_PT = BASE / "runs" / "morango_v2" / "weights" / "last.pt"
 BEST_PT = BASE / "models" / "best.pt"
-if BEST_PT.exists():
+if LAST_PT.exists():
+    model = YOLO(str(LAST_PT))
+    print(f"🔁  Retomando a partir de checkpoint: {LAST_PT}")
+elif BEST_PT.exists():
     model = YOLO(str(BEST_PT))
     print(f"🔁  Iniciando fine-tune a partir de: {BEST_PT}")
 else:
