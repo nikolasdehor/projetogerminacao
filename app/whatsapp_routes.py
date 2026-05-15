@@ -4,10 +4,10 @@ from __future__ import annotations
 import base64
 import json
 import os
-import threading
 import time as _time
 import traceback
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Lock
 
@@ -15,8 +15,28 @@ from flask import (
     Blueprint, current_app, jsonify, render_template, request
 )
 
+# Dedup de message_id para descartar reentregas da Evolution API
 _seen_msg_ids: deque[str] = deque(maxlen=500)
 _seen_ids_lock = Lock()
+
+# Pool de workers com backpressure: max 2 inferências YOLO simultâneas
+_MAX_WORKERS = 2
+_MAX_QUEUE = 20
+_executor = ThreadPoolExecutor(max_workers=_MAX_WORKERS, thread_name_prefix="wa-worker")
+_queue_lock = Lock()
+_queue_pending = {"count": 0}
+
+
+def _process_async(app, payload: dict) -> None:
+    """Processa mensagem em background com app context."""
+    try:
+        with app.app_context():
+            _handle_message(payload)
+    except Exception as exc:
+        app.logger.exception(f"[worker] erro processando mensagem: {exc}")
+    finally:
+        with _queue_lock:
+            _queue_pending["count"] = max(0, _queue_pending["count"] - 1)
 
 from app.whatsapp import get_client
 from app.inference import parse_caption as _parse_caption
@@ -152,6 +172,21 @@ def whatsapp_qrcode():
         return jsonify({"error": str(e)}), 500
 
 
+# ── Health check ──────────────────────────────────────────────────────────────
+
+@wp.route("/api/whatsapp/health", methods=["GET"])
+def whatsapp_health():
+    with _queue_lock:
+        pending = _queue_pending["count"]
+    return jsonify({
+        "status": "ok",
+        "queue_pending": pending,
+        "queue_max": _MAX_QUEUE,
+        "workers": _MAX_WORKERS,
+        "seen_ids_cache": len(_seen_msg_ids),
+    }), 200
+
+
 # ── Webhook: Recebe mensagens do WhatsApp ─────────────────────────────────────
 
 @wp.route("/api/whatsapp/webhook", methods=["POST"])
@@ -167,22 +202,23 @@ def whatsapp_webhook():
     print(f"📱 Webhook recebido: {event}")
 
     if event in ("MESSAGES.UPSERT", "MESSAGES_UPSERT"):
+        with _queue_lock:
+            if _queue_pending["count"] >= _MAX_QUEUE:
+                current_app.logger.warning(
+                    f"[backpressure] fila cheia ({_queue_pending['count']}/{_MAX_QUEUE}), descartando webhook"
+                )
+                return jsonify({"received": True, "queued": False, "reason": "queue_full"}), 200
+            _queue_pending["count"] += 1
+
         app = current_app._get_current_object()
-        def _process():
-            try:
-                with app.app_context():
-                    _handle_message(payload)
-            except Exception as e:
-                print(f"❌ Erro ao processar mensagem WhatsApp: {e}")
-                traceback.print_exc()
-        threading.Thread(target=_process, daemon=True).start()
+        _executor.submit(_process_async, app, payload)
 
     elif event in ("CONNECTION.UPDATE", "CONNECTION_UPDATE"):
         state = payload.get("data", {}).get("state", "unknown")
-        print(f"📱 WhatsApp conexão: {state}")
+        current_app.logger.info(f"[whatsapp] conexão: {state}")
 
     # Retorna 200 imediatamente para a Evolution API não reenviar por timeout
-    return jsonify({"received": True}), 200
+    return jsonify({"received": True, "queued": True}), 200
 
 
 # ── Handler de mensagens ──────────────────────────────────────────────────────
