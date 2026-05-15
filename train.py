@@ -81,6 +81,17 @@ results = model.train(
     hsv_h=0.5,
     hsv_s=0.9,
     hsv_v=0.5,
+    # augmentation geométrico para câmera torta e plantas distantes
+    degrees=15.0,
+    translate=0.2,
+    scale=0.5,
+    shear=5.0,
+    perspective=0.001,
+    flipud=0.5,
+    fliplr=0.5,
+    mosaic=1.0,
+    mixup=0.15,
+    copy_paste=0.3,
 )
 
 # ── Copia best.pt para models/ ────────────────────────────────────────────────

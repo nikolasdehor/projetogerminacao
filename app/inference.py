@@ -118,17 +118,17 @@ def _run_inference_sahi(
     import cv2 as _cv2
     _img = _cv2.imread(str(img_path))
     _h, _w = _img.shape[:2] if _img is not None else (512, 512)
-    # Tiles adaptivos: ~metade da menor dimensão para garantir fatiamento real
-    tile = max(192, min(_h, _w) // 2)
+    tile_size = 416  # tile fixo, melhor para plantas pequenas/distantes
+    overlap_ratio = 0.3  # overlap maior compensa tile menor
     sahi_model = _get_sahi_model(model_path)
     sliced = get_sliced_prediction(
         image=str(img_path),
         detection_model=sahi_model,
-        slice_height=tile,
-        slice_width=tile,
-        overlap_height_ratio=0.3,
-        overlap_width_ratio=0.3,
-        postprocess_match_threshold=0.4,
+        slice_height=tile_size,
+        slice_width=tile_size,
+        overlap_height_ratio=overlap_ratio,
+        overlap_width_ratio=overlap_ratio,
+        postprocess_match_threshold=0.5,
         verbose=0,
     )
     detections = []
@@ -345,7 +345,7 @@ def run_inference(
             names = class_names or fallback_names
             raw_boxes = _run_inference_sahi(norm_path, model_path, names)
             # Filtro class-aware: Germinacao aceita -0.07, Folha aceita -0.10
-            germ_conf = max(0.15, conf_threshold - 0.07)
+            germ_conf = max(0.12, conf_threshold - 0.13)
             folha_conf = max(0.15, conf_threshold - 0.10)
             raw_boxes = [
                 d for d in raw_boxes
@@ -360,6 +360,7 @@ def run_inference(
                 source=img_for_inference,
                 conf=folha_conf,
                 imgsz=1280,
+                augment=True,
                 verbose=False,
             )
             result = results[0]
@@ -372,7 +373,7 @@ def run_inference(
                 x1, y1, x2, y2 = [int(v) for v in xyxy]
                 raw_boxes.append({"cls_name": cls_name, "conf": conf, "bbox": (x1, y1, x2, y2)})
             # Filtro class-aware: Germinacao aceita -0.07, Folha aceita -0.10
-            germ_conf = max(0.15, conf_threshold - 0.07)
+            germ_conf = max(0.12, conf_threshold - 0.13)
             raw_boxes = [
                 d for d in raw_boxes
                 if (d["cls_name"] == "Germinacao" and d["conf"] >= germ_conf)
