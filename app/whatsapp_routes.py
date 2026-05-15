@@ -9,12 +9,14 @@ import time as _time
 import traceback
 from collections import deque
 from pathlib import Path
-
-_seen_msg_ids: deque[str] = deque(maxlen=500)
+from threading import Lock
 
 from flask import (
     Blueprint, current_app, jsonify, render_template, request
 )
+
+_seen_msg_ids: deque[str] = deque(maxlen=500)
+_seen_ids_lock = Lock()
 
 from app.whatsapp import get_client
 from app.inference import parse_caption as _parse_caption
@@ -196,13 +198,14 @@ def _handle_message(payload: dict):
     if key.get("fromMe", False):
         return
 
-    # Dedup: descarta reentregas do mesmo webhook pela Evolution API
+    # Dedup thread-safe: descarta reentregas do mesmo webhook pela Evolution API
     msg_id = key.get("id", "")
     if msg_id:
-        if msg_id in _seen_msg_ids:
-            print(f"⚠️ Mensagem duplicada ignorada: {msg_id}")
-            return
-        _seen_msg_ids.append(msg_id)
+        with _seen_ids_lock:
+            if msg_id in _seen_msg_ids:
+                current_app.logger.info(f"[dedup] message_id duplicado ignorado: {msg_id}")
+                return
+            _seen_msg_ids.append(msg_id)
 
     remote_jid = key.get("remoteJid", "")
     # Extrai número limpo (5511999999999)
@@ -212,6 +215,12 @@ def _handle_message(payload: dict):
         return
 
     msg = data.get("message", {})
+
+    # Filtra tipos de mensagem que não devem ser processados (reactions, protocol, etc.)
+    _ALLOWED_MSG_TYPES = {"imageMessage", "conversation", "extendedTextMessage", "documentMessage"}
+    if msg and not any(k in msg for k in _ALLOWED_MSG_TYPES):
+        current_app.logger.info(f"[skip] tipo de mensagem ignorado: {list(msg.keys())}")
+        return
     client = get_client()
 
     # ── Imagem recebida → roda inferência ──────────────────────────────────
