@@ -281,26 +281,22 @@ def _handle_image_message(client, sender: str, payload: dict, raw_caption: str |
         client.send_text(sender, "⚠️ Não consegui baixar a imagem. Tente enviar novamente.")
         return
 
-    # Roda inferência
+    # Roda inferência (capacidade da caption passada para sanity check interno)
     try:
         result = run_inference(
             image_path=image_path,
             model=current_app.config["MODEL"],
             result_folder=result_dir,
             conf_threshold=0.5,
+            tray_capacity_override=tray_capacity_override,
         )
     except Exception as e:
         client.send_text(sender, f"❌ Erro na análise: {e}")
         return
 
-    # Capacidade: caption tem prioridade sobre detecção automática
-    capacity = (
-        tray_capacity_override
-        or result.get("cells_detected")
-        or result.get("tray_capacity", 200)
-    )
+    capacity = result["cells_detected"]
     germinated = result["germinated"]
-    rate = round(germinated / capacity * 100, 1) if capacity > 0 else result["germination_rate"]
+    rate = result["germination_rate"]
 
     # Salva no banco
     try:
@@ -330,17 +326,20 @@ def _handle_image_message(client, sender: str, payload: dict, raw_caption: str |
         avaliacao = "Atenção! Taxa baixa. Avalie qualidade das sementes, substrato, umidade e temperatura."
 
     label_linha = f"🏷️ *Tratamento:* {caption}\n" if caption else ""
-    capacidade_origem = "informada" if tray_capacity_override else "detectada"
+    cells_origin = result.get("cells_origin", "detected")
+    origem_label = {"caption": "informada", "detected": "detectada", "fallback_default": "estimada"}.get(cells_origin, "detectada")
+    cells_warning = result.get("cells_warning")
+    warning_linha = f"\n{cells_warning}" if cells_warning else ""
 
     texto = (
         f"🌱 *Análise da Bandeja — GerminaVision*\n"
         f"{label_linha}\n"
         f"📊 *Resultados:*\n"
-        f"• Plantas germinadas: {germinated} de {capacity} células ({rate}%) [{capacidade_origem}]\n"
+        f"• Plantas germinadas: {germinated} de {capacity} células ({rate}%) [{origem_label}]\n"
         f"• Folhas por planta (média): {result['leaf_avg']}\n"
         f"• Total de folhas estimadas: {int(round(result['leaf_avg'] * germinated))}\n"
         f"• Tempo de análise: {result['inference_time_s']}s\n\n"
-        f"{emoji} *{avaliacao}*\n\n"
+        f"{emoji} *{avaliacao}*{warning_linha}\n\n"
     )
 
     # Detalha detecções por classe

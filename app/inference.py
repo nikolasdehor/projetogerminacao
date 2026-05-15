@@ -232,12 +232,59 @@ def _estimate_leaves_by_contours(crop_bgr: np.ndarray) -> int:
     return min(n_estimated, 6)
 
 
+_cell_detection_stats: dict[str, int] = {"success": 0, "fallback": 0}
+
+
+def get_cell_detection_stats() -> dict[str, int]:
+    """Retorna telemetria acumulada de detecções de células."""
+    return dict(_cell_detection_stats)
+
+
+def _resolve_cell_count(
+    raw_detected: Optional[int],
+    germinated_count: int,
+    tray_capacity_override: Optional[int],
+) -> tuple[int, str]:
+    """Sanity check + fallback hierárquico para contagem de células.
+
+    Retorna (células_usadas, origem) onde origem é uma das strings:
+    'caption', 'detected', 'fallback_default'.
+    """
+    global _cell_detection_stats
+
+    # 1. Caption tem prioridade absoluta
+    if tray_capacity_override is not None:
+        _cell_detection_stats["success"] += 1
+        return tray_capacity_override, "caption"
+
+    # 2. Valida detecção automática: descarta se anômala
+    if raw_detected is not None:
+        min_plausible = max(4, int(germinated_count * 1.5))
+        if min_plausible <= raw_detected <= 500:
+            _cell_detection_stats["success"] += 1
+            return max(raw_detected, germinated_count), "detected"
+        print(
+            f"  [cells] Detecção anômala descartada: {raw_detected} "
+            f"(germinadas={germinated_count}, mín plausível={min_plausible})"
+        )
+
+    # 3. Fallback: TRAY_CAPACITY default
+    _cell_detection_stats["fallback"] += 1
+    total_attempts = sum(_cell_detection_stats.values())
+    print(
+        f"  [cells] Fallback para TRAY_CAPACITY={TRAY_CAPACITY} "
+        f"(falhas={_cell_detection_stats['fallback']}/{total_attempts})"
+    )
+    return max(TRAY_CAPACITY, germinated_count), "fallback_default"
+
+
 def run_inference(
     image_path: str,
     model,
     result_folder: str,
     conf_threshold: float = 0.25,
     class_names: Optional[list[str]] = None,
+    tray_capacity_override: Optional[int] = None,
 ) -> dict:
     """Roda detecção YOLO e retorna métricas + imagem anotada."""
     t0 = time.time()
@@ -410,8 +457,18 @@ def run_inference(
     germinated_count = len(germ_boxes)
     leaves_total = len(folha_boxes)
     total = len(detections)
-    detected_cells = _count_visible_cells(img_bgr) or TRAY_CAPACITY
-    detected_cells = max(detected_cells, germinated_count)
+
+    raw_detected = _count_visible_cells(img_bgr)
+    detected_cells, cells_origin = _resolve_cell_count(
+        raw_detected, germinated_count, tray_capacity_override
+    )
+    cells_warning = (
+        "⚠️ Não consegui detectar o total de células. Envie a foto com legenda "
+        "contendo o número de células (ex: '128') para resultado preciso."
+        if cells_origin == "fallback_default"
+        else None
+    )
+
     germination_rate = round(germinated_count / detected_cells * 100, 1) if detected_cells > 0 else 0.0
     leaf_avg = round(sum(leaf_counts) / len(leaf_counts), 1) if leaf_counts else 0.0
     elapsed = round(time.time() - t0, 2)
@@ -421,6 +478,8 @@ def run_inference(
         "germinated":       germinated_count,
         "germination_rate": germination_rate,
         "cells_detected":   detected_cells,
+        "cells_origin":     cells_origin,
+        "cells_warning":    cells_warning,
         "leaf_avg":         leaf_avg,
         "total_folhas_estimadas": int(round(leaf_avg * germinated_count)),
         "leaf_counts":      leaf_counts,
