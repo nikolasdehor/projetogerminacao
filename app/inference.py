@@ -491,8 +491,7 @@ def run_inference(
         raw_detected, germinated_count, tray_capacity_override
     )
     cells_warning = (
-        "⚠️ Não consegui detectar o total de células. Envie a foto com legenda "
-        "contendo o número de células (ex: '128') para resultado preciso."
+        "_💡 Dica: envie um número na legenda (ex: '128') para definir o total de células._"
         if cells_origin == "fallback_default"
         else None
     )
