@@ -49,6 +49,7 @@ def init_db(db_path: str) -> None:
             "ALTER TABLE analyses ADD COLUMN analysis_embedding BLOB",
             "ALTER TABLE analyses ADD COLUMN source TEXT",
             "ALTER TABLE analyses ADD COLUMN sender TEXT",
+            "ALTER TABLE analyses ADD COLUMN caption TEXT",
         ):
             try:
                 conn.execute(alter)
@@ -98,6 +99,7 @@ def insert_analysis(
     day_label: Optional[str] = None,
     source: str = "web",
     sender: Optional[str] = None,
+    caption: Optional[str] = None,
 ) -> int:
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -127,10 +129,10 @@ def insert_analysis(
         cur = conn.execute(
             """INSERT INTO analyses
                (timestamp, filename, total_detected, germinated, germination_rate,
-                leaf_avg, result_image, day_label, analysis_summary, analysis_embedding, source, sender)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                leaf_avg, result_image, day_label, analysis_summary, analysis_embedding, source, sender, caption)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (ts, filename, total_detected, germinated, germination_rate,
-             leaf_avg, result_image, day_label, summary, analysis_embedding, source, sender),
+             leaf_avg, result_image, day_label, summary, analysis_embedding, source, sender, caption),
         )
         conn.commit()
         return cur.lastrowid
@@ -141,7 +143,7 @@ def get_history(db_path: str, limit: int = 20, offset: int = 0) -> list[dict]:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             """SELECT id, timestamp, filename, total_detected, germinated, germination_rate,
-                      leaf_avg, result_image, day_label, analysis_summary,
+                      leaf_avg, result_image, day_label, analysis_summary, caption,
                       CASE WHEN filename LIKE 'wa_%' OR filename LIKE 'whatsapp_%' THEN 'whatsapp'
                            WHEN source IS NOT NULL THEN source
                            ELSE 'web' END AS source,

@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import time as _time
 import traceback
 from pathlib import Path
@@ -15,6 +16,32 @@ from flask import (
 from app.whatsapp import get_client
 
 wp = Blueprint("whatsapp", __name__)
+
+_CAPTION_CAPACITY_RE = re.compile(r"\b([1-9]\d{1,2})\b")  # 10-999, filtra depois por 12-500
+
+
+def _parse_caption(raw: str | None) -> tuple[str | None, int | None]:
+    """Retorna (caption_sanitizada, capacidade_extraida_ou_None).
+
+    Capacidade: primeiro número entre 12 e 500 encontrado na caption.
+    Caption: limitada a 100 chars, sem caracteres de controle.
+    """
+    if not raw:
+        return None, None
+
+    # Remove caracteres de controle (exceto espaço/newline normais) e normaliza espaços
+    caption = re.sub(r"[^\x20-\x7EÀ-ɏЀ-ӿ\n\r]", "", raw)
+    caption = " ".join(caption.split())[:100].strip() or None
+
+    capacity: int | None = None
+    if raw:
+        for m in _CAPTION_CAPACITY_RE.finditer(raw):
+            n = int(m.group(1))
+            if 12 <= n <= 500:
+                capacity = n
+                break
+
+    return caption, capacity
 
 
 def _extract_quoted_text(msg: dict) -> str | None:
@@ -199,7 +226,12 @@ def _handle_message(payload: dict):
 
     # ── Imagem recebida → roda inferência ──────────────────────────────────
     if "imageMessage" in msg or "documentMessage" in msg:
-        _handle_image_message(client, sender, payload)
+        raw_caption = (
+            msg.get("imageMessage", {}).get("caption")
+            or msg.get("documentMessage", {}).get("caption")
+            or ""
+        ).strip() or None
+        _handle_image_message(client, sender, payload, raw_caption=raw_caption)
         return
 
     # ── Texto recebido → chatbot ou comandos ───────────────────────────────
@@ -228,7 +260,7 @@ def _handle_message(payload: dict):
         _handle_chat_message(client, sender, text, quoted=quoted)
 
 
-def _handle_image_message(client, sender: str, payload: dict):
+def _handle_image_message(client, sender: str, payload: dict, raw_caption: str | None = None):
     """Processa imagem: baixa, roda YOLO, envia resultado."""
     from flask import current_app
     from app.inference import run_inference
@@ -236,6 +268,8 @@ def _handle_image_message(client, sender: str, payload: dict):
 
     upload_dir = current_app.config["UPLOAD_FOLDER"]
     result_dir = current_app.config["RESULT_FOLDER"]
+
+    caption, tray_capacity_override = _parse_caption(raw_caption)
 
     # Notifica que estamos processando (com indicador "digitando..." para feedback visual)
     client.send_presence(sender, "composing", delay_ms=3000)
@@ -259,27 +293,32 @@ def _handle_image_message(client, sender: str, payload: dict):
         client.send_text(sender, f"❌ Erro na análise: {e}")
         return
 
+    # Capacidade: caption tem prioridade sobre detecção automática
+    capacity = (
+        tray_capacity_override
+        or result.get("cells_detected")
+        or result.get("tray_capacity", 200)
+    )
+    germinated = result["germinated"]
+    rate = round(germinated / capacity * 100, 1) if capacity > 0 else result["germination_rate"]
+
     # Salva no banco
     try:
         insert_analysis(
             db_path=current_app.config["DB_PATH"],
             filename=f"whatsapp_{sender}",
             total_detected=result["total_detected"],
-            germinated=result["germinated"],
-            germination_rate=result["germination_rate"],
+            germinated=germinated,
+            germination_rate=rate,
             leaf_avg=result["leaf_avg"],
             result_image=result["result_image"],
-            day_label=None,
+            day_label=caption,
             source="whatsapp",
             sender=sender,
+            caption=caption,
         )
     except Exception:
         pass  # Não impede a resposta
-
-    # Monta resposta — taxa baseada na capacidade da bandeja (default 200 células)
-    # Limiares: usamos média entre hortaliças (80%) e morango (70%) → 75% como excelente
-    rate = result["germination_rate"]
-    capacity = result.get("cells_detected") or result.get("tray_capacity", 200)
     if rate >= 75:
         emoji = "🟢"
         avaliacao = "Excelente germinação! Bandeja pronta para o próximo ciclo."
@@ -290,12 +329,16 @@ def _handle_image_message(client, sender: str, payload: dict):
         emoji = "🔴"
         avaliacao = "Atenção! Taxa baixa. Avalie qualidade das sementes, substrato, umidade e temperatura."
 
+    label_linha = f"🏷️ *Tratamento:* {caption}\n" if caption else ""
+    capacidade_origem = "informada" if tray_capacity_override else "detectada"
+
     texto = (
-        f"🌱 *Análise da Bandeja — GerminaVision*\n\n"
+        f"🌱 *Análise da Bandeja — GerminaVision*\n"
+        f"{label_linha}\n"
         f"📊 *Resultados:*\n"
-        f"• Plantas germinadas: {result['germinated']} de {capacity} células ({rate}%)\n"
+        f"• Plantas germinadas: {germinated} de {capacity} células ({rate}%) [{capacidade_origem}]\n"
         f"• Folhas por planta (média): {result['leaf_avg']}\n"
-        f"• Total de folhas estimadas: {int(round(result['leaf_avg'] * result['germinated']))}\n"
+        f"• Total de folhas estimadas: {int(round(result['leaf_avg'] * germinated))}\n"
         f"• Tempo de análise: {result['inference_time_s']}s\n\n"
         f"{emoji} *{avaliacao}*\n\n"
     )
