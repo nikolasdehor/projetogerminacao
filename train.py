@@ -56,46 +56,38 @@ print(f"   Device  : {DEVICE}\n")
 # ── Treino ────────────────────────────────────────────────────────────────────
 from ultralytics import YOLO
 
-LAST_PT = BASE / "runs" / "morango_v2" / "weights" / "last.pt"
-BEST_PT = BASE / "models" / "best.pt"
-if LAST_PT.exists():
-    model = YOLO(str(LAST_PT))
-    print(f"🔁  Retomando a partir de checkpoint: {LAST_PT}")
-elif BEST_PT.exists():
-    model = YOLO(str(BEST_PT))
-    print(f"🔁  Iniciando fine-tune a partir de: {BEST_PT}")
-else:
-    model = YOLO("yolo11s.pt")
+model = YOLO(str(BASE / "yolo11s.pt"))
+print("Iniciando treino morango_v3 a partir de yolo11s.pt (base limpa)…")
 
-print("🚀  Iniciando treino…")
 results = model.train(
     data=str(FIXED_YAML),
-    epochs=100,
-    imgsz=896,
-    batch=2,
-    patience=15,
+    epochs=60,
+    imgsz=640,
+    batch=4,
+    patience=12,
     device=DEVICE,
     workers=0,
     project=str(BASE / "runs"),
-    name="morango_v2",
-    exist_ok=True,
+    name="morango_v3",
+    exist_ok=False,
     cache=False,
     resume=False,
-    # augmentation para luz LED grow (amarelo/verde/azul/vermelho)
-    hsv_h=0.5,
-    hsv_s=0.9,
-    hsv_v=0.5,
-    # augmentation geométrico para câmera torta e plantas distantes
-    degrees=15.0,
-    translate=0.2,
-    scale=0.5,
-    shear=5.0,
-    perspective=0.001,
-    flipud=0.5,
+    # HSV: mantido para lidar com LED roxo, levemente suavizado
+    hsv_h=0.015,
+    hsv_s=0.7,
+    hsv_v=0.4,
+    # geométrico: suavizado — câmera top-down, sem perspectiva real
+    degrees=5.0,
+    translate=0.1,
+    scale=0.3,
+    shear=0.0,
+    perspective=0.0,
+    flipud=0.3,
     fliplr=0.5,
-    mosaic=1.0,
-    mixup=0.15,
-    copy_paste=0.3,
+    # mistura: mosaic parcial, mixup e copy_paste desativados
+    mosaic=0.5,
+    mixup=0.0,
+    copy_paste=0.0,
 )
 
 # ── Copia best.pt para models/ ────────────────────────────────────────────────
