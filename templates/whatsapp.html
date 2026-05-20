@@ -36,9 +36,22 @@
     .wa-hero-sub { font-size: 0.95rem; color: var(--text-2); max-width: 500px; margin: 0 auto; }
 
     /* Layout */
-    .wa-container { max-width: 900px; margin: 0 auto; padding: 0 1.5rem 4rem; }
-    .wa-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem; }
-    @media (max-width: 700px) { .wa-grid { grid-template-columns: 1fr; } }
+    .wa-container { max-width: 1280px; margin: 0 auto; padding: 0 1.5rem 4rem; }
+    .wa-layout {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1.5rem;
+      align-items: start;
+      margin-bottom: 1.5rem;
+    }
+    @media (min-width: 1024px) {
+      .wa-layout {
+        grid-template-columns: minmax(320px, 0.85fr) minmax(0, 1.15fr);
+        gap: 2rem;
+      }
+    }
+    .wa-col { display: flex; flex-direction: column; gap: 1.5rem; min-width: 0; }
+    .wa-features-card { height: 100%; }
 
     /* Status Card */
     .wa-status-card { text-align: center; }
@@ -189,139 +202,83 @@
     </div>
   </div>
 
-  <div class="wa-grid">
-    <!-- ── Status + QR Code ── -->
-    <div class="card wa-status-card" id="statusCard">
-      <h2 class="card-title">📱 Status da Conexão</h2>
-
-      <div id="waStatusDisplay">
-        <div class="wa-status-icon" id="waStatusIcon">📴</div>
-        <p class="wa-status-label" id="waStatusLabel">Verificando...</p>
-        <p class="wa-status-desc" id="waStatusDesc">Checando conexão com Evolution API</p>
-      </div>
-
-      <!-- QR Code area -->
-      <div id="qrArea" hidden>
-        <div class="wa-qr-wrap" id="qrWrap">
-          <div class="wa-qr-placeholder">
-            <div class="wa-qr-placeholder-icon">📱</div>
-            <p>QR Code aparecerá aqui</p>
-          </div>
+  <div class="wa-layout">
+    <!-- ── Coluna esquerda: Conexão + Como funciona ── -->
+    <div class="wa-col">
+      <div class="card">
+        <h2>📱 Conexão WhatsApp</h2>
+        <div id="wa-status-badge" class="status-badge">Verificando...</div>
+        <button id="wa-connect-btn" type="button" class="btn-primary">Conectar WhatsApp</button>
+        <div id="wa-qr-container" style="display:none; margin-top:1rem; text-align:center;">
+          <img id="wa-qr-img" alt="QR Code" style="max-width:260px; width:100%; height:auto;" />
+          <p style="opacity:.7; margin-top:.5rem;">Escaneie o QR no seu WhatsApp em até 60s</p>
         </div>
-        <p style="font-size: 0.78rem; color: var(--text-3); text-align: center;">
-          Abra o WhatsApp → Aparelhos Conectados → Conectar Aparelho
-        </p>
-      </div>
 
-      <!-- Ações -->
-      <div style="margin-top: 1rem; display: flex; flex-direction: column; gap: 0.5rem;">
-        <button class="wa-btn wa-btn-connect" id="connectBtn" type="button">
-          <span>📲</span> Conectar WhatsApp
-        </button>
-        <button class="wa-btn wa-btn-disconnect" id="disconnectBtn" type="button" hidden>
-          <span>🔌</span> Desconectar
-        </button>
-      </div>
-    </div>
-
-    <!-- ── Configuração ── -->
-    <div class="card">
-      <h2 class="card-title">⚙️ Configuração</h2>
-
-      <div class="wa-form-group">
-        <label class="wa-form-label" for="webhookUrl">URL pública do servidor</label>
-        <input class="wa-input" id="webhookUrl" type="url"
-               placeholder="https://meu-server.com" />
-        <p class="wa-form-hint">
-          A URL onde seu GerminaVision está rodando. Exemplo:<br>
-          <code style="color: var(--green-400);">https://germinavision.meudominio.com</code>
-        </p>
-      </div>
-
-      <div class="wa-form-group">
-        <label class="wa-form-label" for="evoUrl">URL da Evolution API</label>
-        <input class="wa-input" id="evoUrl" type="url"
-               placeholder="https://evolution.meudominio.com" />
-        <p class="wa-form-hint">Endereço da sua instância Evolution API</p>
-      </div>
-
-      <div class="wa-form-group">
-        <label class="wa-form-label" for="evoKey">API Key da Evolution</label>
-        <input class="wa-input" id="evoKey" type="password"
-               placeholder="sua_chave_aqui" />
-        <p class="wa-form-hint">Chave de autenticação da Evolution API</p>
-      </div>
-
-      <div class="wa-form-group">
-        <label class="wa-form-label" for="evoInstance">Nome da instância</label>
-        <input class="wa-input" id="evoInstance" type="text"
-               placeholder="germinavision" value="germinavision" />
-        <p class="wa-form-hint">Identificador único da instância WhatsApp</p>
-      </div>
-
-      <!-- How it works -->
-      <div style="margin-top: 1.5rem; border-top: 1px solid var(--border); padding-top: 1rem;">
-        <p class="card-title" style="font-size: 0.85rem;">📋 Como funciona</p>
-        <div class="wa-steps">
-          <div class="wa-step">
-            <div class="wa-step-num">1</div>
-            <div class="wa-step-text">
-              <p class="wa-step-title">Preencha as configs</p>
-              <p class="wa-step-desc">URL do servidor, dados da Evolution API</p>
+        <!-- How it works -->
+        <div style="margin-top: 1.5rem; border-top: 1px solid var(--border); padding-top: 1rem;">
+          <p class="card-title" style="font-size: 0.85rem;">📋 Como funciona</p>
+          <div class="wa-steps">
+            <div class="wa-step">
+              <div class="wa-step-num">1</div>
+              <div class="wa-step-text">
+                <p class="wa-step-title">Clique em "Conectar WhatsApp"</p>
+              </div>
             </div>
-          </div>
-          <div class="wa-step">
-            <div class="wa-step-num">2</div>
-            <div class="wa-step-text">
-              <p class="wa-step-title">Conecte o WhatsApp</p>
-              <p class="wa-step-desc">Escaneie o QR Code com seu celular</p>
+            <div class="wa-step">
+              <div class="wa-step-num">2</div>
+              <div class="wa-step-text">
+                <p class="wa-step-title">Escaneie o QR Code</p>
+                <p class="wa-step-desc">Use a câmera do seu celular no WhatsApp</p>
+              </div>
             </div>
-          </div>
-          <div class="wa-step">
-            <div class="wa-step-num">3</div>
-            <div class="wa-step-text">
-              <p class="wa-step-title">Use pelo WhatsApp</p>
-              <p class="wa-step-desc">Mande fotos e receba análises automaticamente!</p>
+            <div class="wa-step">
+              <div class="wa-step-num">3</div>
+              <div class="wa-step-text">
+                <p class="wa-step-title">Use pelo WhatsApp</p>
+                <p class="wa-step-desc">Mande fotos e receba análises automaticamente!</p>
+              </div>
             </div>
           </div>
         </div>
       </div>
     </div>
-  </div>
 
-  <!-- ── Features ── -->
-  <div class="card">
-    <h2 class="card-title">🚀 O que seu agente faz no WhatsApp</h2>
-    <div class="wa-features">
-      <div class="wa-feature">
-        <div class="wa-feature-icon">📷</div>
-        <p class="wa-feature-title">Análise por Foto</p>
-        <p class="wa-feature-desc">Mande uma foto da bandeja e receba detecção YOLO + taxa de germinação</p>
-      </div>
-      <div class="wa-feature">
-        <div class="wa-feature-icon">🤖</div>
-        <p class="wa-feature-title">Chat com IA</p>
-        <p class="wa-feature-desc">Converse com o GerminaBot sobre dúvidas de cultivo e germinação</p>
-      </div>
-      <div class="wa-feature">
-        <div class="wa-feature-icon">📊</div>
-        <p class="wa-feature-title">Estatísticas</p>
-        <p class="wa-feature-desc">Digite "status" para ver as estatísticas gerais das suas análises</p>
-      </div>
-      <div class="wa-feature">
-        <div class="wa-feature-icon">📋</div>
-        <p class="wa-feature-title">Histórico</p>
-        <p class="wa-feature-desc">Digite "histórico" para ver as últimas 5 análises realizadas</p>
-      </div>
-      <div class="wa-feature">
-        <div class="wa-feature-icon">💡</div>
-        <p class="wa-feature-title">Dicas</p>
-        <p class="wa-feature-desc">Digite "dica" para receber uma dica de germinação aleatória</p>
-      </div>
-      <div class="wa-feature">
-        <div class="wa-feature-icon">❓</div>
-        <p class="wa-feature-title">Menu de Ajuda</p>
-        <p class="wa-feature-desc">Digite "ajuda" para ver todos os comandos disponíveis</p>
+    <!-- ── Coluna direita: Features ── -->
+    <div class="wa-col">
+      <div class="card wa-features-card">
+        <h2 class="card-title">🚀 O que seu agente faz no WhatsApp</h2>
+        <div class="wa-features">
+          <div class="wa-feature">
+            <div class="wa-feature-icon">📷</div>
+            <p class="wa-feature-title">Análise por Foto</p>
+            <p class="wa-feature-desc">Mande uma foto da bandeja e receba detecção YOLO + taxa de germinação</p>
+          </div>
+          <div class="wa-feature">
+            <div class="wa-feature-icon">🤖</div>
+            <p class="wa-feature-title">Chat com IA</p>
+            <p class="wa-feature-desc">Converse com o GerminaBot sobre dúvidas de cultivo e germinação</p>
+          </div>
+          <div class="wa-feature">
+            <div class="wa-feature-icon">📊</div>
+            <p class="wa-feature-title">Estatísticas</p>
+            <p class="wa-feature-desc">Digite "status" para ver as estatísticas gerais das suas análises</p>
+          </div>
+          <div class="wa-feature">
+            <div class="wa-feature-icon">📋</div>
+            <p class="wa-feature-title">Histórico</p>
+            <p class="wa-feature-desc">Digite "histórico" para ver as últimas 5 análises realizadas</p>
+          </div>
+          <div class="wa-feature">
+            <div class="wa-feature-icon">💡</div>
+            <p class="wa-feature-title">Dicas</p>
+            <p class="wa-feature-desc">Digite "dica" para receber uma dica de germinação aleatória</p>
+          </div>
+          <div class="wa-feature">
+            <div class="wa-feature-icon">❓</div>
+            <p class="wa-feature-title">Menu de Ajuda</p>
+            <p class="wa-feature-desc">Digite "ajuda" para ver todos os comandos disponíveis</p>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -339,200 +296,49 @@
 
 <script>
 (function() {
-  // ── Elements ────────────────────────────────────────────────────────────────
-  const statusDot       = document.getElementById('statusDot');
-  const statusText      = document.getElementById('statusText');
-  const waStatusIcon    = document.getElementById('waStatusIcon');
-  const waStatusLabel   = document.getElementById('waStatusLabel');
-  const waStatusDesc    = document.getElementById('waStatusDesc');
-  const statusCard      = document.getElementById('statusCard');
-  const qrArea          = document.getElementById('qrArea');
-  const qrWrap          = document.getElementById('qrWrap');
-  const connectBtn      = document.getElementById('connectBtn');
-  const disconnectBtn   = document.getElementById('disconnectBtn');
-  const webhookUrl      = document.getElementById('webhookUrl');
-  const evoUrl          = document.getElementById('evoUrl');
-  const evoKey          = document.getElementById('evoKey');
-  const evoInstance     = document.getElementById('evoInstance');
-  const toast           = document.getElementById('toast');
+  const badge = document.getElementById('wa-status-badge');
+  const btn = document.getElementById('wa-connect-btn');
+  const qrContainer = document.getElementById('wa-qr-container');
+  const qrImg = document.getElementById('wa-qr-img');
 
-  // ── Toast ───────────────────────────────────────────────────────────────────
-  function showToast(msg, type = 'success') {
-    toast.textContent = msg;
-    toast.className = 'toast show ' + type;
-    setTimeout(() => toast.className = 'toast', 3500);
-  }
-
-  // ── Load saved config ──────────────────────────────────────────────────────
-  function loadConfig() {
-    webhookUrl.value  = localStorage.getItem('wa_webhook_url')  || '';
-    evoUrl.value      = localStorage.getItem('wa_evo_url')      || '';
-    evoKey.value      = localStorage.getItem('wa_evo_key')      || '';
-    evoInstance.value  = localStorage.getItem('wa_evo_instance') || 'germinavision';
-  }
-
-  function saveConfig() {
-    localStorage.setItem('wa_webhook_url',   webhookUrl.value.trim());
-    localStorage.setItem('wa_evo_url',       evoUrl.value.trim());
-    localStorage.setItem('wa_evo_key',       evoKey.value.trim());
-    localStorage.setItem('wa_evo_instance',  evoInstance.value.trim());
-  }
-
-  // ── Status display ──────────────────────────────────────────────────────────
-  function updateStatusDisplay(data) {
-    const { configured, state, message } = data;
-
-    if (!configured) {
-      waStatusIcon.textContent  = '⚙️';
-      waStatusLabel.textContent = 'Não configurado';
-      waStatusDesc.textContent  = message || 'Configure a Evolution API no painel ao lado';
-      statusDot.className = 'status-dot';
-      statusText.textContent = 'Sem WhatsApp';
-      connectBtn.hidden = false;
-      disconnectBtn.hidden = true;
-      qrArea.hidden = true;
-      return;
-    }
-
-    switch (state) {
-      case 'open':
-        waStatusIcon.textContent  = '✅';
-        waStatusLabel.textContent = 'Conectado';
-        waStatusDesc.textContent  = message;
-        statusCard.className = 'card wa-status-card wa-status--open';
-        statusDot.className = 'status-dot ok';
-        statusText.textContent = 'WhatsApp ✅';
-        connectBtn.hidden = true;
-        disconnectBtn.hidden = false;
-        qrArea.hidden = true;
-        break;
-      case 'connecting':
-        waStatusIcon.textContent  = '🔄';
-        waStatusLabel.textContent = 'Conectando...';
-        waStatusDesc.textContent  = message;
-        statusDot.className = 'status-dot';
-        statusText.textContent = 'Conectando…';
-        connectBtn.hidden = true;
-        disconnectBtn.hidden = true;
-        break;
-      default: // close, error
-        waStatusIcon.textContent  = '📴';
-        waStatusLabel.textContent = 'Desconectado';
-        waStatusDesc.textContent  = message;
-        statusDot.className = 'status-dot error';
-        statusText.textContent = 'WhatsApp 🔴';
-        connectBtn.hidden = false;
-        disconnectBtn.hidden = true;
-        qrArea.hidden = true;
-    }
-  }
-
-  // ── Check status ────────────────────────────────────────────────────────────
-  async function checkStatus() {
+  async function updateStatus() {
     try {
-      const res  = await fetch('/api/whatsapp/status');
-      const data = await res.json();
-      updateStatusDisplay(data);
-    } catch {
-      updateStatusDisplay({ configured: false, state: 'error', message: 'Servidor offline' });
-    }
-  }
-
-  // ── Connect ─────────────────────────────────────────────────────────────────
-  connectBtn.addEventListener('click', async () => {
-    const url = webhookUrl.value.trim();
-    if (!url) {
-      showToast('Preencha a URL pública do servidor', 'error');
-      webhookUrl.focus();
-      return;
-    }
-
-    saveConfig();
-    connectBtn.disabled = true;
-    connectBtn.innerHTML = '<span>⏳</span> Criando instância...';
-
-    try {
-      const res = await fetch('/api/whatsapp/connect', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ webhook_url: url }),
-      });
-      const data = await res.json();
-
-      if (data.error) {
-        showToast(data.error, 'error');
-        connectBtn.disabled = false;
-        connectBtn.innerHTML = '<span>📲</span> Conectar WhatsApp';
-        return;
-      }
-
-      // Show QR Code
-      qrArea.hidden = false;
-      if (data.qrcode) {
-        const img = document.createElement('img');
-        img.src = data.qrcode.startsWith('data:') ? data.qrcode : 'data:image/png;base64,' + data.qrcode;
-        img.alt = 'QR Code WhatsApp';
-        qrWrap.innerHTML = '';
-        qrWrap.appendChild(img);
-      }
-
-      if (data.pairingCode) {
-        const code = document.createElement('p');
-        code.style.cssText = 'text-align:center;font-family:var(--font-mono);font-size:1.4rem;font-weight:700;color:#25d366;margin-top:0.5rem;letter-spacing:0.1em';
-        code.textContent = data.pairingCode;
-        qrWrap.appendChild(code);
-      }
-
-      showToast('Escaneie o QR Code no WhatsApp!', 'success');
-
-      // Poll for connection
-      let attempts = 0;
-      const poll = setInterval(async () => {
-        attempts++;
-        if (attempts > 60) { clearInterval(poll); return; }
-        try {
-          const sr = await fetch('/api/whatsapp/status');
-          const sd = await sr.json();
-          if (sd.state === 'open') {
-            clearInterval(poll);
-            updateStatusDisplay(sd);
-            showToast('WhatsApp conectado com sucesso! 🎉', 'success');
-          }
-        } catch {}
-      }, 3000);
-
-    } catch (e) {
-      showToast('Erro ao conectar: ' + e.message, 'error');
-    } finally {
-      connectBtn.disabled = false;
-      connectBtn.innerHTML = '<span>📲</span> Conectar WhatsApp';
-    }
-  });
-
-  // ── Disconnect ──────────────────────────────────────────────────────────────
-  disconnectBtn.addEventListener('click', async () => {
-    if (!confirm('Tem certeza que deseja desconectar o WhatsApp?')) return;
-
-    try {
-      const res  = await fetch('/api/whatsapp/disconnect', { method: 'POST' });
-      const data = await res.json();
-      if (data.success) {
-        showToast('WhatsApp desconectado', 'success');
-        checkStatus();
+      const r = await fetch('/api/whatsapp/status');
+      const d = await r.json();
+      const state = d.state || 'close';
+      if (state === 'open') {
+        badge.textContent = '✅ Conectado';
+        badge.className = 'status-badge connected';
+        qrContainer.style.display = 'none';
+      } else if (state === 'connecting') {
+        badge.textContent = '⏳ Conectando...';
+        badge.className = 'status-badge connecting';
       } else {
-        showToast(data.error || 'Erro ao desconectar', 'error');
+        badge.textContent = '❌ Desconectado';
+        badge.className = 'status-badge disconnected';
       }
-    } catch (e) {
-      showToast('Erro: ' + e.message, 'error');
+    } catch(e) {
+      badge.textContent = 'Erro';
     }
+  }
+
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    btn.textContent = 'Gerando QR...';
+    try {
+      const r = await fetch('/api/whatsapp/qr');
+      const d = await r.json();
+      if (d.base64) {
+        qrImg.src = d.base64.startsWith('data:') ? d.base64 : 'data:image/png;base64,' + d.base64;
+        qrContainer.style.display = 'block';
+      }
+    } catch(e) {}
+    btn.disabled = false;
+    btn.textContent = 'Conectar WhatsApp';
   });
 
-  // ── Init ────────────────────────────────────────────────────────────────────
-  loadConfig();
-  checkStatus();
-
-  // Auto-refresh status every 10s
-  setInterval(checkStatus, 10000);
+  updateStatus();
+  setInterval(updateStatus, 5000);
 })();
 </script>
 </body>

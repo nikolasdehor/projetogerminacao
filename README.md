@@ -353,6 +353,27 @@ curl -X POST "$EVOLUTION_API_URL/webhook/set/$INSTANCE_NAME" \
 
 ---
 
+## Configuração WhatsApp
+
+As credenciais da Evolution API são lidas exclusivamente de variáveis de ambiente, nunca do frontend. Configure em `.env`:
+
+| Variável | Descrição |
+|----------|-----------|
+| `PUBLIC_BASE_URL` | URL pública onde o app está acessível (ex: cloudflared tunnel) |
+| `EVOLUTION_API_URL` | URL da instância Evolution API |
+| `EVOLUTION_API_KEY` | Chave de autenticação da Evolution |
+| `EVOLUTION_INSTANCE_NAME` | Nome da instância WhatsApp (padrão: `germinavision`) |
+
+Use `.env.example` como base.
+
+Para conectar o WhatsApp:
+
+1. Acesse `/whatsapp` na interface
+2. Clique em "Conectar WhatsApp"
+3. Escaneie o QR Code com seu celular
+
+---
+
 ## Como usar
 
 ### Dashboard web

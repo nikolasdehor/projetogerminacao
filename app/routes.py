@@ -40,11 +40,6 @@ def mcp_docs():
     return render_template("mcp.html", v=int(_time.time()))
 
 
-@bp.route("/whatsapp")
-def whatsapp():
-    return render_template("whatsapp.html", v=int(_time.time()))
-
-
 @bp.route("/favicon.ico")
 def favicon():
     svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🌱</text></svg>'

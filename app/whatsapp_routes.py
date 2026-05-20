@@ -74,11 +74,13 @@ def whatsapp_config():
 @wp.route("/api/whatsapp/status")
 def whatsapp_status():
     """Retorna status da conexão WhatsApp."""
+    instance_name = os.getenv("EVOLUTION_INSTANCE_NAME", "")
     client = get_client()
     if not client.is_configured():
         return jsonify({
             "configured": False,
             "state": "unconfigured",
+            "instance": instance_name,
             "message": "Evolution API não configurada. Preencha as variáveis no .env",
         })
 
@@ -88,12 +90,14 @@ def whatsapp_status():
         return jsonify({
             "configured": True,
             "state": state,
+            "instance": instance_name,
             "message": _state_message(state),
         })
     except RuntimeError as e:
         return jsonify({
             "configured": True,
             "state": "error",
+            "instance": instance_name,
             "message": f"Erro ao conectar na Evolution API: {e}",
         })
 
@@ -111,23 +115,20 @@ def _state_message(state: str) -> str:
 
 @wp.route("/api/whatsapp/connect", methods=["POST"])
 def whatsapp_connect():
-    """Cria instância e retorna QR Code."""
+    """Cria instância e retorna QR Code. Toda config vem do .env."""
     client = get_client()
     if not client.is_configured():
         return jsonify({"error": "Evolution API não configurada"}), 400
 
-    data = request.get_json(silent=True) or {}
-    webhook_url = data.get("webhook_url", "").strip().rstrip("/")
-
-    if not webhook_url:
-        return jsonify({"error": "Informe a webhook_url (URL pública do seu servidor)"}), 400
+    public_url = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
+    if not public_url:
+        public_url = f"https://{request.host}" if request.host else ""
+    webhook_url = f"{public_url}/api/whatsapp/webhook" if public_url else None
 
     try:
-        # Cria instância
-        result = client.create_instance(webhook_url=webhook_url + "/api/whatsapp/webhook")
+        result = client.create_instance(webhook_url=webhook_url)
         qrcode_data = result.get("qrcode", {})
 
-        # Se não veio QR no create, tenta buscar
         if not qrcode_data:
             qr_result = client.get_qrcode()
             qrcode_data = qr_result
@@ -158,15 +159,22 @@ def whatsapp_disconnect():
 
 # ── API: QR Code atualizado ───────────────────────────────────────────────────
 
-@wp.route("/api/whatsapp/qrcode")
-def whatsapp_qrcode():
-    """Retorna QR Code atualizado para conexão."""
+@wp.route("/api/whatsapp/qr")
+def whatsapp_qr():
+    """Retorna QR Code atualizado para conexão (formato Evolution API)."""
     client = get_client()
     try:
         result = client.get_qrcode()
+        state = "close"
+        try:
+            status = client.get_instance_status()
+            state = status.get("instance", {}).get("state", status.get("state", "close"))
+        except RuntimeError:
+            pass
         return jsonify({
             "base64": result.get("base64", ""),
             "pairingCode": result.get("pairingCode", ""),
+            "state": state,
         })
     except RuntimeError as e:
         return jsonify({"error": str(e)}), 500
