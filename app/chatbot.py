@@ -79,6 +79,47 @@ from app.database import get_chat_history, insert_chat_message
 from app.embeddings import find_similar_messages, find_relevant_knowledge, find_similar_analyses
 
 
+# ── Sanitização de formatação WhatsApp ─────────────────────────────────────────
+
+def _sanitize_whatsapp(text: str) -> str:
+    """Normaliza Markdown para o subset que o WhatsApp realmente renderiza.
+
+    Regras corrigidas:
+    - **bold** ou ***bold*** -> *bold*  (WhatsApp só aceita asterisco simples)
+    - __italic__ -> _italic_
+    - ~~strike~~ -> ~strike~
+    - Cabeçalhos Markdown (# ## ###) -> *texto* na linha
+    - Blockquotes (> ) removidos
+    - Asteriscos colados com pontuação no fim do delimitador, ex "*texto* :" -> "*texto*:"
+    - Trim em espaços internos do delimitador, ex "* texto *" -> "*texto*"
+    """
+    if not text:
+        return text
+
+    # Cabeçalhos Markdown -> negrito simples na linha
+    text = re.sub(r"^\s*#{1,6}\s+(.+?)\s*$", r"*\1*", text, flags=re.MULTILINE)
+
+    # Blockquotes -> linha normal
+    text = re.sub(r"^\s*>\s?", "", text, flags=re.MULTILINE)
+
+    # Negrito Markdown duplo/triplo -> simples (***x*** primeiro pra não sobrar resíduo)
+    text = re.sub(r"\*{3,}([^*\n]+?)\*{3,}", r"*\1*", text)
+    text = re.sub(r"\*{2}([^*\n]+?)\*{2}", r"*\1*", text)
+
+    # Itálico Markdown __x__ -> _x_
+    text = re.sub(r"__([^_\n]+?)__", r"_\1_", text)
+
+    # Tachado Markdown ~~x~~ -> ~x~
+    text = re.sub(r"~~([^~\n]+?)~~", r"~\1~", text)
+
+    # Remove espaços internos próximos aos delimitadores: "* texto *" -> "*texto*"
+    text = re.sub(r"\*\s+([^*\n]+?)\s+\*", r"*\1*", text)
+    text = re.sub(r"\*\s+([^*\n]+?)\*", r"*\1*", text)
+    text = re.sub(r"\*([^*\n]+?)\s+\*", r"*\1*", text)
+
+    return text
+
+
 # ── Motor de resposta ──────────────────────────────────────────────────────────
 
 def gerar_resposta(mensagem: str, db_path: str, sender: str | None = None) -> str:
@@ -260,6 +301,7 @@ INTEGRIDADE DA RESPOSTA (CRÍTICO — revise antes de enviar):
                 result = json.loads(response.read().decode("utf-8"))
                 content = result["choices"][0]["message"]["content"].strip()
                 if content:
+                    content = _sanitize_whatsapp(content)
                     if sender:
                         insert_chat_message(db_path, sender, "user", mensagem)
                         insert_chat_message(db_path, sender, "assistant", content)

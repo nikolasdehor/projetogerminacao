@@ -9,3 +9,18 @@ models/best.pt
 .env*
 runs/
 seedling.v1i.yolov8/
+
+# Backups e caches gerados por treino/limpeza
+dataset/**/labels.bak_*/
+dataset/**/labels.cache
+dataset/labels_backup/
+dataset/quarantine/
+dataset/autolabel_uploads/
+
+# Saídas runtime do Flask (recriadas a cada análise)
+static/results/
+static/uploads/
+
+# Logs
+*.log
+train_hsv.log
