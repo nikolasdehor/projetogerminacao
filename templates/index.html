@@ -3,11 +3,11 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>GerminaVision — Monitoramento de Mudas com IA</title>
-  <meta name="description" content="Sistema de visão computacional para monitoramento automático de germinação e crescimento de mudas usando YOLO11." />
+  <title>GerminaVision | Monitoramento de Mudas</title>
+  <meta name="description" content="Sistema de visão computacional para monitoramento de germinação e crescimento de mudas em bandejas usando YOLO11." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,650;9..144,750&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/css/style.css?v={{ v }}" />
 </head>
 <body>
@@ -16,15 +16,15 @@
 <nav class="navbar">
   <div class="nav-inner">
     <div class="nav-brand">
-      <span class="nav-icon">🌱</span>
+      <span class="nav-icon" aria-hidden="true"></span>
       <span class="nav-title">GerminaVision</span>
     </div>
     <div class="nav-center">
       <a href="#upload-section" class="nav-link">Analisar</a>
       <a href="#temporal-section" class="nav-link">Evolução</a>
       <a href="#history-section" class="nav-link">Histórico</a>
-      <a href="/whatsapp" class="nav-link" style="color: #25d366; font-weight: 600;">📱 WhatsApp</a>
-      <a href="/mcp" class="nav-link" style="color: #34d399; font-weight: 600;">MCP API</a>
+      <a href="/whatsapp" class="nav-link nav-link-strong">WhatsApp</a>
+      <a href="/mcp" class="nav-link nav-link-strong">MCP API</a>
     </div>
     <div class="nav-status">
       <span class="status-dot" id="statusDot"></span>
@@ -37,9 +37,12 @@
 <header class="hero">
   <div class="hero-bg"></div>
   <div class="hero-content">
-    <div class="hero-badge">Visão Computacional · YOLO11 · PyTorch</div>
-    <h1 class="hero-title">Monitoramento de<br><span class="gradient-text">Germinação</span> com IA</h1>
-    <p class="hero-sub">Detecte mudas automaticamente, estime o número de folhas e acompanhe a evolução temporal do seu cultivo.</p>
+    <h1 class="hero-title">GerminaVision</h1>
+    <p class="hero-sub">Monitoramento de germinação para bandejas de mudas: foto, detecção YOLO, histórico e leitura de evolução em um só painel.</p>
+    <div class="hero-actions">
+      <a class="btn-hero" href="#upload-section">Analisar bandeja</a>
+      <a class="btn-hero btn-hero-secondary" href="/whatsapp">Usar no WhatsApp</a>
+    </div>
     <div class="hero-stats">
       <div class="hero-stat"><span class="stat-n" id="statTotal">—</span><span class="stat-l">Análises</span></div>
       <div class="hero-stat"><span class="stat-n" id="statGermRate">—</span><span class="stat-l">Taxa Média</span></div>
@@ -57,11 +60,11 @@
 
       <!-- Upload Card -->
       <div class="card upload-card">
-        <h2 class="card-title">📤 Analisar Imagem</h2>
+        <h2 class="card-title">Analisar imagem</h2>
 
         <div class="drop-zone" id="dropZone" tabindex="0" role="button"
              aria-label="Área de upload — arraste uma imagem ou clique">
-          <div class="drop-icon">🌿</div>
+          <div class="drop-icon" aria-hidden="true"></div>
           <p class="drop-text">Arraste uma imagem aqui</p>
           <p class="drop-sub">ou <span class="link">clique para selecionar</span></p>
           <p class="drop-formats">PNG · JPG · WEBP · BMP</p>
@@ -81,7 +84,7 @@
         </div>
 
         <button class="btn-primary" id="analyzeBtn" type="button" disabled>
-          <span class="btn-icon">🔍</span> Analisar Imagem
+          <span class="btn-icon" aria-hidden="true">&gt;</span> Analisar imagem
         </button>
 
         <div class="progress-wrap" id="progressWrap" hidden>
@@ -92,7 +95,7 @@
 
       <!-- Quick metrics (aparece após análise) -->
       <div class="card metrics-side" id="metricsSide" hidden>
-        <h2 class="card-title">📊 Métricas</h2>
+        <h2 class="card-title">Métricas</h2>
         <div class="big-metrics">
           <div class="big-metric">
             <span class="big-val" id="mRate">0%</span>
@@ -135,8 +138,8 @@
   <section class="section result-section" id="resultSection" hidden>
     <div class="card result-full-card">
       <div class="card-header">
-        <h2 class="card-title">🔬 Imagem Anotada</h2>
-        <a id="resultDownload" class="btn-ghost btn-sm" download="resultado.jpg">⬇ Baixar</a>
+        <h2 class="card-title">Imagem anotada</h2>
+        <a id="resultDownload" class="btn-ghost btn-sm" download="resultado.jpg">Baixar</a>
       </div>
       <div class="result-img-wrap">
         <img id="resultImg" class="result-img-full" alt="Detecções anotadas pelo YOLO11" />
@@ -180,16 +183,16 @@
       <div class="card chart-card flex-grow">
         <div class="card-header">
           <div>
-            <h2 class="card-title">📈 Evolução Temporal</h2>
+            <h2 class="card-title">Evolução temporal</h2>
             <p class="card-sub" id="chartSubtitle">Faça uploads em dias diferentes para ver a evolução temporal da germinação</p>
           </div>
-          <button class="btn-ghost btn-sm" id="refreshChart" type="button">↻ Atualizar</button>
+          <button class="btn-ghost btn-sm" id="refreshChart" type="button">Atualizar</button>
         </div>
         <div class="chart-wrap">
           <canvas id="temporalChart"></canvas>
           <div class="chart-empty" id="chartEmpty" hidden>
             <div class="chart-empty-inner">
-              <div class="chart-empty-icon">📅</div>
+              <div class="chart-empty-icon">D0</div>
               <p class="chart-empty-title">Série temporal vazia</p>
               <p class="chart-empty-desc">Faça uploads em dias diferentes para ver a evolução da germinação ao longo do experimento.</p>
             </div>
@@ -199,12 +202,12 @@
 
       <!-- Distribuição de qualidade -->
       <div class="card dist-card">
-        <h2 class="card-title">🎯 Distribuição de Qualidade</h2>
+        <h2 class="card-title">Distribuição de qualidade</h2>
         <div class="chart-wrap donut-wrap">
           <canvas id="distChart"></canvas>
           <div class="chart-empty" id="distEmpty" hidden>
             <div class="chart-empty-inner">
-              <div class="chart-empty-icon">🌱</div>
+              <div class="chart-empty-icon">%</div>
               <p class="chart-empty-desc">Faça análises para ver a distribuição</p>
             </div>
           </div>
@@ -218,7 +221,7 @@
   <section class="section" id="history-section">
     <div class="card">
       <div class="card-header">
-        <h2 class="card-title">🗂 Histórico de Análises</h2>
+        <h2 class="card-title">Histórico de análises</h2>
         <span class="badge" id="historyCount">0 registros</span>
       </div>
       <div class="table-wrap">
@@ -230,7 +233,7 @@
             </tr>
           </thead>
           <tbody id="historyBody">
-            <tr class="empty-row"><td colspan="10">Nenhuma análise ainda. Faça o primeiro upload! 🌱</td></tr>
+            <tr class="empty-row"><td colspan="10">Nenhuma análise ainda. Faça o primeiro upload.</td></tr>
           </tbody>
         </table>
       </div>
@@ -250,7 +253,7 @@
 
 <!-- ═══ CHATBOT ═══════════════════════════════════════════════════════════════ -->
 <div class="chat-fab" id="chatFab" title="GerminaBot — Assistente de Germinação">
-  <span class="chat-fab-icon" id="chatFabIcon">💬</span>
+  <span class="chat-fab-icon" id="chatFabIcon">GV</span>
   <span class="chat-unread" id="chatUnread" hidden>1</span>
 </div>
 

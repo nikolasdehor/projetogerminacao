@@ -24,3 +24,9 @@ static/uploads/
 # Logs
 *.log
 train_hsv.log
+
+# Evidências locais de validação visual
+.playwright-mcp/
+agent-browser-*.png
+germinavision-*.png
+germina-ui-connected.png

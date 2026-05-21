@@ -7,7 +7,7 @@
   <meta name="description" content="Configure seu agente GerminaVision no WhatsApp para análise de germinação diretamente pelo celular." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,650;9..144,750&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/css/style.css?v={{ v }}" />
   <style>
     /* ── WhatsApp Page Styles ── */
@@ -157,6 +157,91 @@
       display: flex; align-items: flex-start; gap: 0.6rem; font-size: 0.82rem; color: var(--text-2);
     }
     .wa-alert-icon { font-size: 1rem; flex-shrink: 0; margin-top: 1px; }
+
+    /* Mini-status grid (visível quando conectado) */
+    .wa-session-grid {
+      display: flex; flex-direction: column; gap: 0.6rem;
+    }
+    .wa-session-item {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 0.45rem 0.7rem; background: var(--bg-2); border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+    }
+    .wa-session-label { font-size: 0.78rem; color: var(--text-3); }
+    .wa-session-value {
+      font-size: 0.82rem; font-weight: 600; font-family: var(--font-mono);
+      color: var(--text-1); max-width: 55%; text-align: right;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+  </style>
+  <style>
+    .wa-hero {
+      min-height: 360px;
+      padding: 4rem 2rem 4.4rem;
+      display: flex;
+      align-items: center;
+      text-align: left;
+      color: #f8fbf4;
+      border-bottom: 1px solid rgba(23, 33, 25, 0.16);
+    }
+    .wa-hero-bg {
+      background:
+        linear-gradient(90deg, rgba(11, 18, 12, 0.86), rgba(11, 18, 12, 0.54), rgba(11, 18, 12, 0.22)),
+        url('/static/media/seedling-tray-hero.jpg') center 42% / cover no-repeat;
+    }
+    .wa-hero-content {
+      width: min(1120px, 100%);
+      max-width: 1120px;
+      text-align: left;
+    }
+    .wa-hero-badge { display: none; }
+    .wa-hero-title {
+      max-width: 760px;
+      font-family: var(--font-display);
+      font-size: clamp(2.8rem, 7vw, 5.8rem);
+      line-height: 0.92;
+      letter-spacing: 0;
+      margin-bottom: 1rem;
+    }
+    .wa-gradient {
+      background: none;
+      color: #e0f2be;
+      -webkit-text-fill-color: currentColor;
+    }
+    .wa-hero-sub {
+      margin: 0;
+      max-width: 560px;
+      color: rgba(248, 251, 244, 0.82);
+      font-size: 1.08rem;
+    }
+    .wa-container { max-width: 1200px; margin: -2rem auto 0; position: relative; z-index: 2; }
+    .wa-layout { gap: 1.2rem; }
+    @media (min-width: 1024px) {
+      .wa-layout { grid-template-columns: minmax(320px, 0.82fr) minmax(0, 1.18fr); gap: 1.2rem; }
+    }
+    .wa-status-card { text-align: left; }
+    .wa-status-icon { display: none; }
+    .wa-status-label { color: var(--text-1); }
+    .wa-qr-wrap { border: 1px solid var(--border); border-radius: var(--radius); }
+    .wa-features { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 0.8rem; }
+    .wa-feature {
+      text-align: left;
+      border-radius: var(--radius);
+      background: #fff;
+      box-shadow: none;
+    }
+    .wa-feature:hover { box-shadow: var(--glow); }
+    .wa-feature-icon {
+      margin-bottom: 0.45rem;
+      color: var(--amber);
+      font-family: var(--font-mono);
+      font-size: 0.68rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+    }
+    .wa-step-num { background: var(--green-600); }
+    .wa-alert { background: #fff9ef; color: var(--text-2); }
+    .wa-session-item { background: var(--surface-h); }
   </style>
 </head>
 <body>
@@ -165,14 +250,14 @@
 <nav class="navbar">
   <div class="nav-inner">
     <div class="nav-brand">
-      <span class="nav-icon">🌱</span>
+      <span class="nav-icon" aria-hidden="true"></span>
       <span class="nav-title">GerminaVision</span>
     </div>
     <div class="nav-center">
       <a href="/" class="nav-link">Início</a>
       <a href="/#upload-section" class="nav-link">Analisar</a>
-      <a href="/whatsapp" class="nav-link" style="color: #25d366; font-weight: 600;">📱 WhatsApp</a>
-      <a href="/mcp" class="nav-link" style="color: #34d399; font-weight: 600;">MCP API</a>
+      <a href="/whatsapp" class="nav-link nav-link-strong">WhatsApp</a>
+      <a href="/mcp" class="nav-link nav-link-strong">MCP API</a>
     </div>
     <div class="nav-status">
       <span class="status-dot" id="statusDot"></span>
@@ -185,60 +270,89 @@
 <header class="wa-hero">
   <div class="wa-hero-bg"></div>
   <div class="wa-hero-content">
-    <div class="wa-hero-badge">Integração WhatsApp · Evolution API</div>
-    <h1 class="wa-hero-title">Seu Agente no <span class="wa-gradient">WhatsApp</span></h1>
-    <p class="wa-hero-sub">Configure aqui e depois analise suas bandejas diretamente pelo WhatsApp — mande uma foto e receba o resultado na hora.</p>
+    <h1 class="wa-hero-title">GerminaVision no <span class="wa-gradient">WhatsApp</span></h1>
+    <p class="wa-hero-sub">Mande uma foto da bandeja pelo celular e receba a leitura de germinação sem abrir o painel web.</p>
   </div>
 </header>
 
 <!-- ═══ MAIN ═══ -->
 <main class="wa-container">
 
-  <!-- Alert para URL pública -->
-  <div class="wa-alert" id="publicUrlAlert">
-    <span class="wa-alert-icon">⚠️</span>
+  <!-- Alert para URL pública — só aparece quando URL é local/ausente -->
+  <div class="wa-alert" id="publicUrlAlert" style="display:none;">
+    <span class="wa-alert-icon">!</span>
     <div>
       <strong>URL pública necessária:</strong> Para receber mensagens do WhatsApp, seu servidor precisa estar acessível pela internet (VPS, ngrok, Cloudflare Tunnel, etc.)
     </div>
   </div>
 
   <div class="wa-layout">
-    <!-- ── Coluna esquerda: Conexão + Como funciona ── -->
+    <!-- ── Coluna esquerda: Conexão + painel condicional ── -->
     <div class="wa-col">
       <div class="card">
-        <h2>📱 Conexão WhatsApp</h2>
+        <h2>Conexão WhatsApp</h2>
         <div id="wa-status-badge" class="status-badge">Verificando...</div>
-        <button id="wa-connect-btn" type="button" class="btn-primary">Conectar WhatsApp</button>
+
+        <!-- QR Container (visível só durante fluxo de conexão) -->
         <div id="wa-qr-container" style="display:none; margin-top:1rem; text-align:center;">
           <img id="wa-qr-img" alt="QR Code" style="max-width:260px; width:100%; height:auto;" />
           <p style="opacity:.7; margin-top:.5rem;">Escaneie o QR no seu WhatsApp em até 60s</p>
         </div>
 
-        <!-- How it works -->
+        <!-- Botão Conectar (visível quando desconectado) -->
+        <button id="wa-connect-btn" type="button" class="wa-btn wa-btn-connect" style="margin-top:1rem;">
+          Conectar WhatsApp
+        </button>
+
+        <!-- Botão Desconectar (visível quando conectado) -->
+        <button id="wa-disconnect-btn" type="button" class="wa-btn wa-btn-disconnect" style="display:none; margin-top:1rem;">
+          Desconectar
+        </button>
+
         <div style="margin-top: 1.5rem; border-top: 1px solid var(--border); padding-top: 1rem;">
-          <p class="card-title" style="font-size: 0.85rem;">📋 Como funciona</p>
-          <div class="wa-steps">
-            <div class="wa-step">
-              <div class="wa-step-num">1</div>
-              <div class="wa-step-text">
-                <p class="wa-step-title">Clique em "Conectar WhatsApp"</p>
+
+          <!-- "Como funciona" — visível só quando desconectado -->
+          <div id="wa-how-it-works">
+            <p class="card-title" style="font-size: 0.85rem;">Como funciona</p>
+            <div class="wa-steps">
+              <div class="wa-step">
+                <div class="wa-step-num">1</div>
+                <div class="wa-step-text">
+                  <p class="wa-step-title">Clique em "Conectar WhatsApp"</p>
+                </div>
               </div>
-            </div>
-            <div class="wa-step">
-              <div class="wa-step-num">2</div>
-              <div class="wa-step-text">
-                <p class="wa-step-title">Escaneie o QR Code</p>
-                <p class="wa-step-desc">Use a câmera do seu celular no WhatsApp</p>
+              <div class="wa-step">
+                <div class="wa-step-num">2</div>
+                <div class="wa-step-text">
+                  <p class="wa-step-title">Escaneie o QR Code</p>
+                  <p class="wa-step-desc">Use a câmera do seu celular no WhatsApp</p>
+                </div>
               </div>
-            </div>
-            <div class="wa-step">
-              <div class="wa-step-num">3</div>
-              <div class="wa-step-text">
-                <p class="wa-step-title">Use pelo WhatsApp</p>
-                <p class="wa-step-desc">Mande fotos e receba análises automaticamente!</p>
+              <div class="wa-step">
+                <div class="wa-step-num">3</div>
+                <div class="wa-step-text">
+                  <p class="wa-step-title">Use pelo WhatsApp</p>
+                  <p class="wa-step-desc">Mande fotos e receba análises automaticamente!</p>
+                </div>
               </div>
             </div>
           </div>
+
+          <!-- Mini-status — visível só quando conectado -->
+          <div id="wa-mini-status" style="display:none;">
+            <p class="card-title" style="font-size: 0.85rem; margin-bottom:0.75rem;">Status da sessão</p>
+            <div class="wa-session-grid">
+              <div class="wa-session-item">
+                <span class="wa-session-label">Instância</span>
+                <span class="wa-session-value" id="wa-session-instance">—</span>
+              </div>
+              <div class="wa-session-item">
+                <span class="wa-session-label">Bot ativo</span>
+                <span class="wa-session-value" style="color:#25d366;">● Online</span>
+              </div>
+            </div>
+          </div>
+
         </div>
       </div>
     </div>
@@ -246,35 +360,35 @@
     <!-- ── Coluna direita: Features ── -->
     <div class="wa-col">
       <div class="card wa-features-card">
-        <h2 class="card-title">🚀 O que seu agente faz no WhatsApp</h2>
+        <h2 class="card-title">O que funciona pelo WhatsApp</h2>
         <div class="wa-features">
           <div class="wa-feature">
-            <div class="wa-feature-icon">📷</div>
+            <div class="wa-feature-icon">FOTO</div>
             <p class="wa-feature-title">Análise por Foto</p>
             <p class="wa-feature-desc">Mande uma foto da bandeja e receba detecção YOLO + taxa de germinação</p>
           </div>
-          <div class="wa-feature">
-            <div class="wa-feature-icon">🤖</div>
-            <p class="wa-feature-title">Chat com IA</p>
+          <div class="wa-feature" id="wa-feature-chat">
+            <div class="wa-feature-icon">CHAT</div>
+            <p class="wa-feature-title">GerminaBot <span id="wa-bot-indicator" style="display:none; font-size:0.65rem; color:#2f6f4e; vertical-align:middle;">● online</span></p>
             <p class="wa-feature-desc">Converse com o GerminaBot sobre dúvidas de cultivo e germinação</p>
           </div>
           <div class="wa-feature">
-            <div class="wa-feature-icon">📊</div>
+            <div class="wa-feature-icon">DADOS</div>
             <p class="wa-feature-title">Estatísticas</p>
             <p class="wa-feature-desc">Digite "status" para ver as estatísticas gerais das suas análises</p>
           </div>
           <div class="wa-feature">
-            <div class="wa-feature-icon">📋</div>
+            <div class="wa-feature-icon">HIST</div>
             <p class="wa-feature-title">Histórico</p>
             <p class="wa-feature-desc">Digite "histórico" para ver as últimas 5 análises realizadas</p>
           </div>
           <div class="wa-feature">
-            <div class="wa-feature-icon">💡</div>
+            <div class="wa-feature-icon">DICA</div>
             <p class="wa-feature-title">Dicas</p>
             <p class="wa-feature-desc">Digite "dica" para receber uma dica de germinação aleatória</p>
           </div>
           <div class="wa-feature">
-            <div class="wa-feature-icon">❓</div>
+            <div class="wa-feature-icon">AJUDA</div>
             <p class="wa-feature-title">Menu de Ajuda</p>
             <p class="wa-feature-desc">Digite "ajuda" para ver todos os comandos disponíveis</p>
           </div>
@@ -296,35 +410,87 @@
 
 <script>
 (function() {
-  const badge = document.getElementById('wa-status-badge');
-  const btn = document.getElementById('wa-connect-btn');
-  const qrContainer = document.getElementById('wa-qr-container');
-  const qrImg = document.getElementById('wa-qr-img');
+  const badge           = document.getElementById('wa-status-badge');
+  const connectBtn      = document.getElementById('wa-connect-btn');
+  const disconnectBtn   = document.getElementById('wa-disconnect-btn');
+  const qrContainer     = document.getElementById('wa-qr-container');
+  const qrImg           = document.getElementById('wa-qr-img');
+  const publicUrlAlert  = document.getElementById('publicUrlAlert');
+  const howItWorks      = document.getElementById('wa-how-it-works');
+  const miniStatus      = document.getElementById('wa-mini-status');
+  const sessionInstance = document.getElementById('wa-session-instance');
+  const botIndicator    = document.getElementById('wa-bot-indicator');
+
+  function applyConnectedState(data) {
+    badge.textContent = 'Conectado';
+    badge.className = 'status-badge connected';
+    connectBtn.style.display    = 'none';
+    disconnectBtn.style.display = 'block';
+    qrContainer.style.display   = 'none';
+    howItWorks.style.display    = 'none';
+    miniStatus.style.display    = 'block';
+    sessionInstance.textContent = data.instance || '—';
+    botIndicator.style.display  = 'inline';
+  }
+
+  function applyDisconnectedState() {
+    badge.textContent = 'Desconectado';
+    badge.className = 'status-badge disconnected';
+    connectBtn.style.display    = 'block';
+    disconnectBtn.style.display = 'none';
+    howItWorks.style.display    = 'block';
+    miniStatus.style.display    = 'none';
+    botIndicator.style.display  = 'none';
+  }
+
+  function applyConnectingState() {
+    badge.textContent = 'Conectando...';
+    badge.className = 'status-badge connecting';
+    connectBtn.style.display    = 'block';
+    disconnectBtn.style.display = 'none';
+    howItWorks.style.display    = 'block';
+    miniStatus.style.display    = 'none';
+    botIndicator.style.display  = 'none';
+  }
 
   async function updateStatus() {
     try {
       const r = await fetch('/api/whatsapp/status');
       const d = await r.json();
       const state = d.state || 'close';
+      const navDot = document.getElementById('statusDot');
+      const navText = document.getElementById('statusText');
+
+      // Banner amarelo: so aparece quando public_url_ok === false (localhost/ausente)
+      publicUrlAlert.style.display = (d.public_url_ok === false) ? 'flex' : 'none';
+
       if (state === 'open') {
-        badge.textContent = '✅ Conectado';
-        badge.className = 'status-badge connected';
-        qrContainer.style.display = 'none';
+        applyConnectedState(d);
+        if (navDot) navDot.className = 'status-dot ok';
+        if (navText) navText.textContent = 'WhatsApp conectado';
       } else if (state === 'connecting') {
-        badge.textContent = '⏳ Conectando...';
-        badge.className = 'status-badge connecting';
+        applyConnectingState();
+        if (navDot) navDot.className = 'status-dot';
+        if (navText) navText.textContent = 'Conectando';
       } else {
-        badge.textContent = '❌ Desconectado';
-        badge.className = 'status-badge disconnected';
+        applyDisconnectedState();
+        if (navDot) navDot.className = 'status-dot error';
+        if (navText) navText.textContent = 'WhatsApp desconectado';
       }
     } catch(e) {
-      badge.textContent = 'Erro';
+      badge.textContent = 'Erro de conexão';
+      badge.className = 'status-badge disconnected';
+      const navDot = document.getElementById('statusDot');
+      const navText = document.getElementById('statusText');
+      if (navDot) navDot.className = 'status-dot error';
+      if (navText) navText.textContent = 'Erro de conexão';
     }
   }
 
-  btn.addEventListener('click', async () => {
-    btn.disabled = true;
-    btn.textContent = 'Gerando QR...';
+  // Botao Conectar: busca QR para escanear
+  connectBtn.addEventListener('click', async () => {
+    connectBtn.disabled = true;
+    connectBtn.textContent = 'Gerando QR...';
     try {
       const r = await fetch('/api/whatsapp/qr');
       const d = await r.json();
@@ -332,9 +498,21 @@
         qrImg.src = d.base64.startsWith('data:') ? d.base64 : 'data:image/png;base64,' + d.base64;
         qrContainer.style.display = 'block';
       }
-    } catch(e) {}
-    btn.disabled = false;
-    btn.textContent = 'Conectar WhatsApp';
+    } catch(e) { /* status poll reflete o estado real */ }
+    connectBtn.disabled = false;
+    connectBtn.textContent = 'Conectar WhatsApp';
+  });
+
+  // Botao Desconectar
+  disconnectBtn.addEventListener('click', async () => {
+    if (!confirm('Desconectar o WhatsApp? O bot ficará offline até reconectar.')) return;
+    disconnectBtn.disabled = true;
+    disconnectBtn.textContent = 'Desconectando...';
+    try {
+      await fetch('/api/whatsapp/disconnect', { method: 'POST' });
+    } catch(e) { /* ignora — poll atualiza */ }
+    disconnectBtn.disabled = false;
+    await updateStatus();
   });
 
   updateStatus();

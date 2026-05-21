@@ -3,7 +3,7 @@
 // ── State ─────────────────────────────────────────────────────────────────────
 let selectedFile  = null;
 let temporalChart = null;
-const CLASS_COLORS   = { Germinacao:'#34d399', Folha:'#fbbf24' };
+const CLASS_COLORS   = { Germinacao:'#2f6f4e', Folha:'#b77433' };
 const CLASS_DISPLAY  = { Germinacao: 'Germinação', Folha: 'Folha' };
 const displayClass   = (c) => CLASS_DISPLAY[c] || c;
 
@@ -59,10 +59,10 @@ async function checkStatus() {
     const dot  = $('statusDot'), txt = $('statusText');
     if (d.model_loaded) {
       dot.className = 'status-dot ok';
-      txt.textContent = d.custom_model ? '✅ Modelo personalizado' : '⚠️ Modelo COCO (sem best.pt)';
+      txt.textContent = d.custom_model ? 'Modelo personalizado' : 'Modelo COCO';
     } else {
       dot.className = 'status-dot error';
-      txt.textContent = '❌ Modelo offline';
+      txt.textContent = 'Modelo offline';
     }
   } catch { $('statusDot').className = 'status-dot error'; $('statusText').textContent = 'Servidor offline'; }
 }
@@ -97,15 +97,15 @@ async function runAnalysis() {
   if (!selectedFile) return;
   analyzeBtn.disabled = true;
   analyzeBtn.classList.add('loading');
-  analyzeBtn.querySelector('.btn-icon').textContent = '⏳';
+  analyzeBtn.querySelector('.btn-icon').textContent = '...';
   progressWrap.hidden = false;
-  setProgress(15, 'Enviando imagem…');
+  setProgress(15, 'Enviando imagem...');
 
   const fd = new FormData();
   fd.append('image', selectedFile);
   fd.append('conf',  confSlider.value / 100);
   try {
-    setProgress(45, 'Rodando YOLO11…');
+    setProgress(45, 'Rodando YOLO11...');
     const res  = await fetch('/api/analyze', { method: 'POST', body: fd });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Erro desconhecido');
@@ -115,14 +115,14 @@ async function runAnalysis() {
     renderResult(data);
     await loadHistory();
     await loadTemporal();
-    showToast(`✅ ${data.total_detected} detecção(ões) — ${data.germination_rate}% germinação`, 'success');
+    showToast(`${data.total_detected} detecção(ões), ${data.germination_rate}% germinação`, 'success');
   } catch(err) {
     setProgress(0,''); progressWrap.hidden = true;
-    showToast('❌ ' + err.message, 'error', 5000);
+    showToast(err.message, 'error', 5000);
   } finally {
     analyzeBtn.disabled = false;
     analyzeBtn.classList.remove('loading');
-    analyzeBtn.querySelector('.btn-icon').textContent = '🔍';
+    analyzeBtn.querySelector('.btn-icon').textContent = '>';
   }
 }
 
@@ -140,7 +140,7 @@ function renderResult(data) {
   $('mTotal').textContent     = data.total_detected;
   $('mGerminated').textContent= data.germinated;
   $('mLeaf').textContent      = data.leaf_avg;
-  $('inferenceTime').textContent = `⏱ ${data.inference_time_s}s`;
+  $('inferenceTime').textContent = `Tempo: ${data.inference_time_s}s`;
 
   // Capacidade detectada automaticamente
   const cellsEl = $('mCells');
@@ -154,7 +154,7 @@ function renderResult(data) {
   const list = $('detectionList');
   list.innerHTML = '';
   data.detections.forEach(d => {
-    const color = CLASS_COLORS[d.class] || '#94a3b8';
+    const color = CLASS_COLORS[d.class] || '#7b8879';
     const item = document.createElement('div');
     item.className = 'det-item';
     const idLabel = d.plant_id ? `#${d.plant_id} · ` : '';
@@ -233,7 +233,7 @@ function renderHistory(records, total) {
   $('historyCount').textContent = `${total} registro${total!==1?'s':''}`;
   const body = $('historyBody');
   if (!records.length) {
-    body.innerHTML = '<tr class="empty-row"><td colspan="10">Nenhuma análise ainda. Faça o primeiro upload! 🌱</td></tr>';
+    body.innerHTML = '<tr class="empty-row"><td colspan="10">Nenhuma análise ainda. Faça o primeiro upload.</td></tr>';
     _updateLoadMoreBtn(0, 0);
     return;
   }
@@ -246,9 +246,9 @@ function renderHistory(records, total) {
       <td>${r.germinated}</td>
       <td><span class="pill ${r.germination_rate>=50?'pill-green':'pill-red'}">${r.germination_rate}%</span></td>
       <td>${r.leaf_avg}</td>
-      <td><span class="badge-source" title="${r.source==='whatsapp'?'Análise via WhatsApp':'Análise via dashboard'}">${r.source==='whatsapp' ? '📱' + (r.sender ? ' ' + formatPhone(r.sender) : '') : '🌐'}</span></td>
-      <td>${r.result_image ? `<img src="${r.result_image}" class="result-thumb" alt="resultado" onclick="openLightbox('${r.result_image}')" />` : '—'}</td>
-      <td><button class="btn-del" title="Deletar" onclick="deleteRecord(${r.id})">🗑</button></td>
+      <td><span class="badge-source" title="${r.source==='whatsapp'?'Análise via WhatsApp':'Análise via dashboard'}">${r.source==='whatsapp' ? 'WhatsApp' + (r.sender ? ' ' + formatPhone(r.sender) : '') : 'Web'}</span></td>
+      <td>${r.result_image ? `<img src="${r.result_image}" class="result-thumb" alt="resultado" onclick="openLightbox('${r.result_image}')" />` : '-'}</td>
+      <td><button class="btn-del" title="Deletar" onclick="deleteRecord(${r.id})">Excluir</button></td>
     </tr>`).join('');
   _updateLoadMoreBtn(_historyOffset, total);
 }
@@ -311,7 +311,7 @@ function renderDistChart(distribution) {
   if (!distribution.length) { empty.hidden = false; return; }
   empty.hidden = true;
 
-  const COLORS = { 'Ótima (≥80%)': '#34d399', 'Boa (60-79%)': '#22d3ee', 'Regular (40-59%)': '#fbbf24', 'Baixa (<40%)': '#ef4444' };
+  const COLORS = { 'Ótima (≥80%)': '#2f6f4e', 'Boa (60-79%)': '#426f92', 'Regular (40-59%)': '#b77433', 'Baixa (<40%)': '#b64f45' };
   const labels = distribution.map(d => d.faixa);
   const values = distribution.map(d => d.qtd);
   const colors = labels.map(l => COLORS[l] || '#94a3b8');
@@ -328,7 +328,7 @@ function renderDistChart(distribution) {
       responsive: true, maintainAspectRatio: false, cutout: '68%',
       plugins: {
         legend: { display: false },
-        tooltip: { backgroundColor: '#172019', borderColor: 'rgba(255,255,255,0.08)', borderWidth: 1, titleColor: '#f0fdf4', bodyColor: '#a3b8a8',
+        tooltip: { backgroundColor: '#172119', borderColor: 'rgba(255,255,255,0.14)', borderWidth: 1, titleColor: '#fffffb', bodyColor: '#dfe8d6',
           callbacks: { label: ctx => ` ${ctx.label}: ${ctx.raw} análise(s)` } },
       },
     },
@@ -354,13 +354,13 @@ function renderChart(data) {
   }
   empty.hidden = true;
   if (data.length === 1) {
-    subtitle.textContent = `1 ponto registrado — adicione mais rótulos de dia para ver a evolução`;
+    subtitle.textContent = `1 ponto registrado, adicione mais rótulos de dia para ver a evolução`;
   } else {
-    subtitle.textContent = `${data.length} pontos temporais · ${data[0].day} → ${data[data.length-1].day}`;
+    subtitle.textContent = `${data.length} pontos temporais, ${data[0].day} a ${data[data.length-1].day}`;
   }
 
-  Chart.defaults.color = '#6b7f71';
-  Chart.defaults.font.family = "'Inter', sans-serif";
+  Chart.defaults.color = '#7b8879';
+  Chart.defaults.font.family = "'IBM Plex Sans', sans-serif";
   const canvas = $('temporalChart');
   const ctx = canvas.getContext('2d');
   if (temporalChart) temporalChart.destroy();
@@ -372,10 +372,10 @@ function renderChart(data) {
       labels: data.map(d => d.day),
       datasets: [
         { label: 'Taxa de Germinação (%)', data: data.map(d => +d.avg_germination_rate.toFixed(1)),
-          borderColor: '#34d399', backgroundColor: 'rgba(52,211,153,0.08)', pointBackgroundColor: '#34d399',
+          borderColor: '#2f6f4e', backgroundColor: 'rgba(47,111,78,0.10)', pointBackgroundColor: '#2f6f4e',
           pointRadius: 6, pointHoverRadius: 9, borderWidth: 2.5, tension: 0.3, fill: true, yAxisID: 'y' },
         { label: 'Folhas médias/muda', data: data.map(d => +d.avg_leaf_count.toFixed(1)),
-          borderColor: '#22d3ee', backgroundColor: 'rgba(34,211,238,0.06)', pointBackgroundColor: '#22d3ee',
+          borderColor: '#b77433', backgroundColor: 'rgba(183,116,51,0.08)', pointBackgroundColor: '#b77433',
           pointRadius: 6, pointHoverRadius: 9, borderWidth: 2.5, tension: 0.3, fill: true, yAxisID: 'y1' },
       ],
     },
@@ -383,8 +383,8 @@ function renderChart(data) {
       responsive: true, maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
       plugins: {
-        legend: { labels: { color: '#a3b8a8', usePointStyle: true, pointStyleWidth: 10 } },
-        tooltip: { backgroundColor: '#172019', borderColor: 'rgba(255,255,255,0.08)', borderWidth: 1, titleColor: '#f0fdf4', bodyColor: '#a3b8a8', padding: 10,
+        legend: { labels: { color: '#4f5f54', usePointStyle: true, pointStyleWidth: 10 } },
+        tooltip: { backgroundColor: '#172119', borderColor: 'rgba(255,255,255,0.14)', borderWidth: 1, titleColor: '#fffffb', bodyColor: '#dfe8d6', padding: 10,
           callbacks: {
             label: ctx => ctx.datasetIndex === 0 ? ` Germinação: ${ctx.raw}%` : ` Folhas: ${ctx.raw}`,
             afterBody: (items) => { const pt = data[items[0].dataIndex]; return pt ? [`  Análises: ${pt.num_analyses}`] : []; }
@@ -393,9 +393,9 @@ function renderChart(data) {
         annotation: data.length > 1 ? {} : undefined,
       },
       scales: {
-        x: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#6b7f71' } },
-        y:  { type:'linear', position:'left',  min:0, max:100, grid:{ color:'rgba(255,255,255,0.04)' }, ticks:{ color:'#34d399', callback: v => v+'%' }, title:{ display:true, text:'Germinação (%)', color:'#34d399', font:{size:11} } },
-        y1: { type:'linear', position:'right', min:0, grid:{ drawOnChartArea:false }, ticks:{ color:'#22d3ee' }, title:{ display:true, text:'Folhas médias', color:'#22d3ee', font:{size:11} } },
+        x: { grid: { color: 'rgba(23,33,25,0.06)' }, ticks: { color: '#7b8879' } },
+        y:  { type:'linear', position:'left',  min:0, max:100, grid:{ color:'rgba(23,33,25,0.06)' }, ticks:{ color:'#2f6f4e', callback: v => v+'%' }, title:{ display:true, text:'Germinação (%)', color:'#2f6f4e', font:{size:11} } },
+        y1: { type:'linear', position:'right', min:0, grid:{ drawOnChartArea:false }, ticks:{ color:'#b77433' }, title:{ display:true, text:'Folhas médias', color:'#b77433', font:{size:11} } },
       },
     },
   });
@@ -410,7 +410,7 @@ const chatInput    = $('chatInput');
 function toggleChat() {
   const open = !chatPanel.hidden;
   chatPanel.hidden = open;
-  $('chatFabIcon').textContent = open ? '💬' : '✕';
+  $('chatFabIcon').textContent = open ? 'GV' : '×';
   $('chatUnread').hidden = true;
   if (!open) setTimeout(() => chatInput.focus(), 200);
 }

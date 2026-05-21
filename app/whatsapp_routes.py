@@ -76,11 +76,18 @@ def whatsapp_status():
     """Retorna status da conexão WhatsApp."""
     instance_name = os.getenv("EVOLUTION_INSTANCE_NAME", "")
     client = get_client()
+
+    # Verifica se a PUBLIC_BASE_URL é realmente pública (não localhost/127.x)
+    public_base_url = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
+    _local_patterns = ("localhost", "127.0.0.1", "0.0.0.0", "::1")
+    public_url_ok = bool(public_base_url) and not any(p in public_base_url for p in _local_patterns)
+
     if not client.is_configured():
         return jsonify({
             "configured": False,
             "state": "unconfigured",
             "instance": instance_name,
+            "public_url_ok": public_url_ok,
             "message": "Evolution API não configurada. Preencha as variáveis no .env",
         })
 
@@ -91,6 +98,7 @@ def whatsapp_status():
             "configured": True,
             "state": state,
             "instance": instance_name,
+            "public_url_ok": public_url_ok,
             "message": _state_message(state),
         })
     except RuntimeError as e:
@@ -98,6 +106,7 @@ def whatsapp_status():
             "configured": True,
             "state": "error",
             "instance": instance_name,
+            "public_url_ok": public_url_ok,
             "message": f"Erro ao conectar na Evolution API: {e}",
         })
 
