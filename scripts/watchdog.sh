@@ -3,11 +3,12 @@
 set -u
 
 LOG=/tmp/germinavision_watchdog.log
-PROJECT_DIR=/Users/nikolas/projetogerminação
+SCRIPT_DIR="$(cd "$(dirname "$(realpath "$0")")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 CLOUDFLARED_LOG=/tmp/cloudflared.log
 FLASK_LOG=/tmp/flask.log
-EVOLUTION_URL="https://your-evolution-instance.example.com"
-EVOLUTION_KEY="REDACTED_KEY"
+EVOLUTION_URL="${EVOLUTION_URL:?Defina EVOLUTION_URL no .env}"
+EVOLUTION_KEY="${EVOLUTION_KEY:?Defina EVOLUTION_KEY no .env}"
 INSTANCE="germinavision"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG"; }
@@ -70,19 +71,19 @@ check_training() {
 
     if [ -z "$TRAIN_PID" ] && [ ! -f "$DONE_FLAG" ]; then
         if grep -qE "Results saved to|Training complete|stopping training" /tmp/train.log 2>/dev/null; then
-            BEST_MAP50=$(awk -F',' 'NR>1 {if($7>max) max=$7} END {print max}' /Users/nikolas/projetogerminação/runs/morango_v2/results.csv 2>/dev/null)
-            LAST_EPOCH=$(awk -F',' 'NR>1 {n=$1} END {print n}' /Users/nikolas/projetogerminação/runs/morango_v2/results.csv 2>/dev/null)
+            BEST_MAP50=$(awk -F',' 'NR>1 {if($7>max) max=$7} END {print max}' "$PROJECT_DIR/runs/morango_v2/results.csv" 2>/dev/null)
+            LAST_EPOCH=$(awk -F',' 'NR>1 {n=$1} END {print n}' "$PROJECT_DIR/runs/morango_v2/results.csv" 2>/dev/null)
             log "TREINO TERMINOU. Epochs: $LAST_EPOCH, melhor mAP50: $BEST_MAP50"
             echo "OK|epoch=$LAST_EPOCH|mAP50=$BEST_MAP50|$(date)" > "$DONE_FLAG"
             osascript -e "display notification \"Treino terminou! mAP50: $BEST_MAP50 em $LAST_EPOCH epochs. Veja models/best.pt\" with title \"GerminaVision\" sound name \"Glass\"" 2>/dev/null
-            if [ -f /Users/nikolas/projetogerminação/runs/morango_v2/weights/best.pt ]; then
-                cp /Users/nikolas/projetogerminação/runs/morango_v2/weights/best.pt /Users/nikolas/projetogerminação/models/best.pt
+            if [ -f "$PROJECT_DIR/runs/morango_v2/weights/best.pt" ]; then
+                cp "$PROJECT_DIR/runs/morango_v2/weights/best.pt" "$PROJECT_DIR/models/best.pt"
                 log "best.pt copiado para models/"
                 osascript -e "display notification \"models/best.pt atualizado, Flask vai recarregar\" with title \"GerminaVision\"" 2>/dev/null
             fi
         elif ! pgrep -f "python train.py" > /dev/null; then
             log "TREINO CRASHOU sem finalizar. Relançando..."
-            cd /Users/nikolas/projetogerminação && nohup caffeinate -i venv/bin/python train.py > /tmp/train.log 2>&1 &
+            cd "$PROJECT_DIR" && nohup caffeinate -i venv/bin/python train.py > /tmp/train.log 2>&1 &
             sleep 3
             NEW_PID=$(pgrep -f "python train.py" | head -1)
             log "Relançado, novo PID: $NEW_PID"

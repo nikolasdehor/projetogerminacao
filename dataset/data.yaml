@@ -1,5 +1,5 @@
 # Dataset Morango — Germinação (gerado por prepare_dataset.py)
-path: /Users/nikolas/projetogerminação/dataset
+path: ./dataset
 train: train/images
 val: valid/images
 test: test/images

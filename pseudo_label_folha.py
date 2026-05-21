@@ -9,7 +9,7 @@ import glob
 import shutil
 from pathlib import Path
 
-DATASET_DIR = Path("/Users/nikolas/projetogerminação/dataset")
+DATASET_DIR = Path(__file__).parent / "dataset"
 BACKUP_DIR  = DATASET_DIR / "labels_backup"
 
 # HSV verde permissivo (cotilédone + folha sob luz natural/LED fria)

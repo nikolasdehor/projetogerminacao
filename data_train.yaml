@@ -1,7 +1,7 @@
-path: "/Users/nikolas/projetogermina\xE7\xE3o/dataset"
-train: "/Users/nikolas/projetogermina\xE7\xE3o/dataset/train/images"
-val: "/Users/nikolas/projetogermina\xE7\xE3o/dataset/valid/images"
-test: "/Users/nikolas/projetogermina\xE7\xE3o/dataset/test/images"
+path: "./dataset"
+train: "./dataset/train/images"
+val: "./dataset/valid/images"
+test: "./dataset/test/images"
 nc: 2
 names:
 - Germinacao

@@ -12,8 +12,8 @@ Configuração no claude_desktop_config.json:
     {
       "mcpServers": {
         "germinavision": {
-          "command": "/Users/nikolas/projetogerminação/venv/bin/python",
-          "args": ["/Users/nikolas/projetogerminação/mcp_server.py"]
+          "command": "<caminho-para-venv>/bin/python",
+          "args": ["<caminho-para-projeto>/mcp_server.py"]
         }
       }
     }
