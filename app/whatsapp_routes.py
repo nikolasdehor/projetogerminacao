@@ -405,7 +405,10 @@ def _handle_image_message(client, sender: str, payload: dict, raw_caption: str |
             avaliacao = "Germinação moderada no recorte visível. Confira a imagem anotada e, se possível, envie a bandeja inteira."
         else:
             emoji = "🟡"
-            avaliacao = "Recorte com espaços vazios visíveis. Não vou tratar isso como diagnóstico da bandeja inteira."
+            avaliacao = (
+                "Leitura do recorte visível: a taxa indica quantas células apresentaram muda "
+                "na área fotografada, não na bandeja inteira."
+            )
     elif rate >= 75:
         emoji = "🟢"
         avaliacao = "Boa germinação na base informada. Continue acompanhando uniformidade e crescimento."

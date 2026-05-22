@@ -333,6 +333,17 @@ def _leaf_based_germination_fallback(
         x1, y1, x2, y2 = bbox
         box_w, box_h = x2 - x1, y2 - y1
         area = _bbox_area(bbox)
+        edge_margin_x = max(3, int(w * 0.01))
+        edge_margin_y = max(3, int(h * 0.01))
+        touches_image_edge = (
+            x1 <= edge_margin_x
+            or y1 <= edge_margin_y
+            or x2 >= w - edge_margin_x
+            or y2 >= h - edge_margin_y
+        )
+        if touches_image_edge and conf < 0.70:
+            continue
+
         crop = hsv[y1:y2, x1:x2]
         if _is_bright_nonplant_artifact(crop):
             continue
@@ -415,7 +426,7 @@ def _filter_germination_by_green_signal(
     removed = 0
 
     for item in boxes:
-        cls_name, _, bbox = item
+        cls_name, conf, bbox = item
         if cls_name not in GERMINATION_CLASSES:
             kept.append(item)
             continue
@@ -430,6 +441,9 @@ def _filter_germination_by_green_signal(
         bright_ratio = cv2.countNonZero(bright_mask) / max(area, 1)
         plant_ratio = _plant_signal_ratio(crop)
         if plant_ratio < 0.04 or _is_bright_nonplant_artifact(crop):
+            removed += 1
+            continue
+        if bright_ratio < 0.005 and area > 30000:
             removed += 1
             continue
         if bright_ratio < 0.03 and plant_ratio < 0.20:
@@ -510,8 +524,335 @@ def _split_tall_germination_boxes(
     return result
 
 
-def _count_visible_cells(img_bgr: np.ndarray) -> Optional[int]:
-    """Conta células visíveis da bandeja com adaptive threshold (lida com iluminação variada)."""
+def _projection_bands(
+    projection: np.ndarray,
+    length: int,
+    min_width: int = 3,
+) -> list[tuple[int, int, float, float]]:
+    """Agrupa picos de uma projeção 1D em faixas candidatas de linha da grade."""
+    if projection.size == 0:
+        return []
+
+    smooth_k = max(5, int(length * 0.015) | 1)
+    smooth = np.convolve(projection, np.ones(smooth_k) / smooth_k, mode="same")
+    peak = float(smooth.max())
+    if peak <= 0:
+        return []
+
+    threshold = max(0.05, min(0.24, peak * 0.35))
+    above = smooth > threshold
+    bands: list[tuple[int, int, float, float]] = []
+    start: int | None = None
+
+    for idx, is_above in enumerate(above):
+        if is_above and start is None:
+            start = idx
+        at_end = idx == len(above) - 1
+        if (not is_above or at_end) and start is not None:
+            end = idx if not is_above else idx + 1
+            if end - start >= min_width:
+                center = (start + end - 1) / 2.0
+                bands.append((start, end, center, float(smooth[start:end].max())))
+            start = None
+
+    return bands
+
+
+def _merge_nearby_bands(
+    bands: list[tuple[int, int, float, float]],
+    axis_length: int,
+) -> list[tuple[int, int, float, float]]:
+    """Une faixas muito próximas produzidas por sujeira/reflexo na mesma linha."""
+    merged: list[tuple[int, int, float, float]] = []
+    for band in sorted(bands, key=lambda item: item[2]):
+        if band[2] < axis_length * 0.02 or band[2] > axis_length * 0.98:
+            continue
+        if merged and band[2] - merged[-1][2] < axis_length * 0.055:
+            prev = merged[-1]
+            merged[-1] = (
+                min(prev[0], band[0]),
+                max(prev[1], band[1]),
+                (prev[2] + band[2]) / 2.0,
+                max(prev[3], band[3]),
+            )
+        else:
+            merged.append(band)
+    return merged
+
+
+def _regular_grid_subset(
+    bands: list[tuple[int, int, float, float]],
+    axis_length: int,
+) -> list[tuple[int, int, float, float]]:
+    """Seleciona a maior sequência com espaçamento regular, descartando bordas falsas."""
+    if len(bands) <= 2:
+        return bands
+
+    min_gap = axis_length * 0.08
+    best: tuple[int, float, float, int, int] | None = None
+
+    for start in range(len(bands)):
+        for end in range(start + 2, len(bands) + 1):
+            subset = bands[start:end]
+            centers = np.array([band[2] for band in subset], dtype=np.float32)
+            gaps = np.diff(centers)
+            if gaps.size == 0:
+                continue
+            median_gap = float(np.median(gaps))
+            if median_gap < min_gap:
+                continue
+            deviation = float(np.max(np.abs(gaps - median_gap)) / max(median_gap, 1.0))
+            if deviation > 0.32:
+                continue
+            # Prioriza mais linhas; em empate, prefere o espaçamento maior/mais regular.
+            score = (len(subset), median_gap, -deviation, start, end)
+            if best is None or score[:3] > best[:3]:
+                best = score
+
+    if best is None:
+        return []
+    return bands[best[3]:best[4]]
+
+
+def _edge_interval_has_grid_signal(
+    bright_mask: np.ndarray,
+    axis: str,
+    start: int,
+    end: int,
+    perpendicular_bands: list[tuple[int, int, float, float]],
+) -> bool:
+    """Confirma se uma faixa de borda ainda contém células, não apenas fundo/vaso."""
+    if end <= start or len(perpendicular_bands) < 2:
+        return False
+
+    h, w = bright_mask.shape[:2]
+    hits = 0
+    required = max(2, int(np.ceil(len(perpendicular_bands) * 0.35)))
+
+    for band in perpendicular_bands:
+        center = int(round(band[2]))
+        if axis == "x":
+            x1, x2 = max(0, start), min(w, end)
+            y1, y2 = max(0, center - 8), min(h, center + 9)
+        else:
+            x1, x2 = max(0, center - 8), min(w, center + 9)
+            y1, y2 = max(0, start), min(h, end)
+
+        roi = bright_mask[y1:y2, x1:x2]
+        if roi.size and float(roi.mean()) / 255.0 > 0.08:
+            hits += 1
+
+    return hits >= required
+
+
+def _count_axis_slots(
+    bands: list[tuple[int, int, float, float]],
+    axis_length: int,
+    bright_mask: np.ndarray,
+    axis: str,
+    perpendicular_bands: list[tuple[int, int, float, float]],
+) -> int | None:
+    """Conta intervalos de células ao longo de um eixo a partir das linhas da grade."""
+    intervals = _axis_cell_intervals(bands, axis_length, bright_mask, axis, perpendicular_bands)
+    return len(intervals) if intervals else None
+
+
+def _axis_cell_intervals(
+    bands: list[tuple[int, int, float, float]],
+    axis_length: int,
+    bright_mask: np.ndarray,
+    axis: str,
+    perpendicular_bands: list[tuple[int, int, float, float]],
+) -> list[tuple[int, int]]:
+    """Retorna intervalos de células válidas ao longo de um eixo da grade."""
+    if len(bands) < 2:
+        return []
+
+    centers = [band[2] for band in bands]
+    spacing = float(np.median(np.diff(np.array(centers, dtype=np.float32))))
+    if spacing <= 0:
+        return []
+
+    # Bordas só contam quando parecem quase uma célula inteira; margens largas
+    # ou lascas estreitas de bandeja cortada entram como recorte, não célula útil.
+    edge_min = max(8, int(spacing * 0.50))
+    edge_max = int(spacing * 1.15)
+    intervals: list[tuple[int, int]] = []
+
+    leading_end = int(round(centers[0]))
+    if edge_min <= leading_end <= edge_max and _edge_interval_has_grid_signal(
+        bright_mask, axis, 0, leading_end, perpendicular_bands
+    ):
+        intervals.append((0, leading_end))
+
+    for start, end in zip(centers, centers[1:]):
+        start_i, end_i = int(round(start)), int(round(end))
+        if end_i > start_i:
+            intervals.append((start_i, end_i))
+
+    trailing_start = int(round(centers[-1]))
+    trailing_len = axis_length - trailing_start
+    if edge_min <= trailing_len <= edge_max and _edge_interval_has_grid_signal(
+        bright_mask, axis, trailing_start, axis_length, perpendicular_bands
+    ):
+        intervals.append((trailing_start, axis_length))
+
+    return intervals
+
+
+def _grid_bands_from_image(
+    img_bgr: np.ndarray,
+) -> tuple[np.ndarray, list[tuple[int, int, float, float]], list[tuple[int, int, float, float]]]:
+    """Extrai máscara clara e linhas regulares da grade."""
+    h, w = img_bgr.shape[:2]
+    hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+    lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB)
+    lightness = lab[:, :, 0]
+    saturation = hsv[:, :, 1]
+    value = hsv[:, :, 2]
+
+    bright_grid = ((value > 125) & (saturation < 135) & (lightness > 115)).astype(np.uint8) * 255
+    green = cv2.inRange(hsv, (25, 35, 35), (95, 255, 255))
+    bright_grid = cv2.bitwise_and(bright_grid, cv2.bitwise_not(green))
+    bright_grid = cv2.morphologyEx(
+        bright_grid,
+        cv2.MORPH_CLOSE,
+        cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)),
+    )
+
+    vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, max(30, int(h * 0.08))))
+    horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (max(30, int(w * 0.08)), 3))
+    vertical_mask = cv2.morphologyEx(bright_grid, cv2.MORPH_OPEN, vertical_kernel)
+    horizontal_mask = cv2.morphologyEx(bright_grid, cv2.MORPH_OPEN, horizontal_kernel)
+
+    vertical_bands = _regular_grid_subset(
+        _merge_nearby_bands(_projection_bands(vertical_mask.mean(axis=0) / 255.0, w), w),
+        w,
+    )
+    horizontal_bands = _regular_grid_subset(
+        _merge_nearby_bands(_projection_bands(horizontal_mask.mean(axis=1) / 255.0, h), h),
+        h,
+    )
+
+    return bright_grid, vertical_bands, horizontal_bands
+
+
+def _grid_cell_boxes(img_bgr: np.ndarray) -> list[tuple[int, int, int, int]]:
+    """Retorna boxes aproximadas das células visíveis da grade."""
+    h, w = img_bgr.shape[:2]
+    bright_grid, vertical_bands, horizontal_bands = _grid_bands_from_image(img_bgr)
+    x_intervals = _axis_cell_intervals(vertical_bands, w, bright_grid, "x", horizontal_bands)
+    y_intervals = _axis_cell_intervals(horizontal_bands, h, bright_grid, "y", vertical_bands)
+    if not x_intervals or not y_intervals:
+        return []
+    return [
+        (x1, y1, x2, y2)
+        for y1, y2 in y_intervals
+        for x1, x2 in x_intervals
+        if x2 > x1 and y2 > y1
+    ]
+
+
+def _tiny_green_germination_fallback(
+    img_bgr: np.ndarray,
+    boxes: list[tuple[str, float, tuple[int, int, int, int]]],
+) -> list[tuple[str, float, tuple[int, int, int, int]]]:
+    """Adiciona mudas muito pequenas quando a célula da grade está vazia."""
+    h, w = img_bgr.shape[:2]
+    cells = _grid_cell_boxes(img_bgr)
+    if not cells:
+        return boxes
+
+    hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+    mask = _plant_mask_from_hsv(hsv, include_led_shadow=False)
+    mask = cv2.morphologyEx(
+        mask,
+        cv2.MORPH_OPEN,
+        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)),
+    )
+    close_k = max(9, int(min(h, w) * 0.028) | 1)
+    mask = cv2.morphologyEx(
+        mask,
+        cv2.MORPH_CLOSE,
+        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (close_k, close_k)),
+    )
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    germ_boxes = [bbox for cls_name, _, bbox in boxes if cls_name in GERMINATION_CLASSES]
+    additions: list[tuple[str, float, tuple[int, int, int, int]]] = []
+    img_area = float(h * w)
+    min_area = max(55.0, img_area * 0.000035)
+    max_area = max(1200.0, img_area * 0.0025)
+    max_dim = max(45, int(min(h, w) * 0.10))
+
+    def _cell_for_center(cx: float, cy: float) -> tuple[int, int, int, int] | None:
+        for cell in cells:
+            x1, y1, x2, y2 = cell
+            if x1 <= cx <= x2 and y1 <= cy <= y2:
+                return cell
+        return None
+
+    def _box_center_inside(box: tuple[int, int, int, int], cell: tuple[int, int, int, int]) -> bool:
+        x1, y1, x2, y2 = box
+        cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+        return cell[0] <= cx <= cell[2] and cell[1] <= cy <= cell[3]
+
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        if not (min_area <= area <= max_area):
+            continue
+        x, y, bw, bh = cv2.boundingRect(contour)
+        if bw < 8 or bh < 8 or bw > max_dim or bh > max_dim:
+            continue
+        fill_ratio = area / max(bw * bh, 1)
+        if fill_ratio < 0.12:
+            continue
+
+        cx, cy = x + bw / 2.0, y + bh / 2.0
+        cell = _cell_for_center(cx, cy)
+        if cell is None:
+            continue
+        if any(_box_center_inside(germ_bbox, cell) for germ_bbox in germ_boxes):
+            continue
+
+        crop = hsv[y:y + bh, x:x + bw]
+        bright_ratio = cv2.countNonZero(_plant_mask_from_hsv(crop, include_led_shadow=False)) / max(bw * bh, 1)
+        if bright_ratio < 0.08:
+            continue
+
+        bbox = _expand_bbox((x, y, x + bw, y + bh), w, h, ratio=0.35)
+        if any(_is_duplicate_germination(bbox, germ_bbox) for germ_bbox in germ_boxes):
+            continue
+        if any(_is_duplicate_germination(bbox, item[2]) for item in additions):
+            continue
+        additions.append(("Germinacao", 0.35, bbox))
+
+    if additions:
+        print(f"  [germ] {len(additions)} mini muda(s) adicionada(s) por grade+verde")
+    return boxes + additions
+
+
+def _count_visible_cells_by_grid(img_bgr: np.ndarray) -> Optional[int]:
+    """Conta células por linhas da grade branca quando a bandeja está visível."""
+    h, w = img_bgr.shape[:2]
+    bright_grid, vertical_bands, horizontal_bands = _grid_bands_from_image(img_bgr)
+    cols = _count_axis_slots(vertical_bands, w, bright_grid, "x", horizontal_bands)
+    rows = _count_axis_slots(horizontal_bands, h, bright_grid, "y", vertical_bands)
+    if cols is None or rows is None:
+        return None
+
+    count = cols * rows
+    if not (4 <= count <= 500):
+        return None
+
+    print(
+        f"  [cells] Grade detectada: {cols} colunas x {rows} linhas = {count} células visíveis"
+    )
+    return count
+
+
+def _count_visible_cells_by_contours(img_bgr: np.ndarray) -> Optional[int]:
+    """Conta células visíveis por contornos escuros do substrato."""
     gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
     h, w = img_bgr.shape[:2]
     # blockSize deve ser ímpar e maior que uma célula típica
@@ -540,6 +881,46 @@ def _count_visible_cells(img_bgr: np.ndarray) -> Optional[int]:
         if 0.4 < aspect < 2.5:
             valid.append(c)
     return len(valid) if len(valid) >= 2 else None
+
+
+def _count_visible_cells_with_method(
+    img_bgr: np.ndarray,
+    image_quality: Optional[dict] = None,
+) -> tuple[Optional[int], str | None]:
+    """Conta células visíveis da bandeja e informa qual sinal venceu.
+
+    Em luz neutra, os contornos escuros do substrato costumam representar bem
+    células completas. Em LED roxo/magenta, esses contornos se fundem; nesse
+    caso a geometria das linhas claras da grade é um sinal mais estável.
+    """
+    if image_quality is None:
+        image_quality = _assess_image_quality(img_bgr)
+
+    contour_count = _count_visible_cells_by_contours(img_bgr)
+    prefer_grid = image_quality.get("issue") in {"led_purple", "led_magenta"}
+
+    if not prefer_grid and contour_count is not None:
+        return contour_count, "contours"
+
+    grid_count = _count_visible_cells_by_grid(img_bgr)
+
+    if prefer_grid and grid_count is not None:
+        if contour_count is not None and abs(grid_count - contour_count) >= max(4, contour_count * 0.35):
+            print(f"  [cells] Contornos={contour_count}; usando grade={grid_count}")
+        return grid_count, "grid"
+
+    if contour_count is not None:
+        return contour_count, "contours"
+
+    return grid_count, "grid" if grid_count is not None else None
+
+
+def _count_visible_cells(
+    img_bgr: np.ndarray,
+    image_quality: Optional[dict] = None,
+) -> Optional[int]:
+    count, _method = _count_visible_cells_with_method(img_bgr, image_quality)
+    return count
 
 
 def _estimate_leaves_by_contours(crop_bgr: np.ndarray) -> int:
@@ -621,6 +1002,7 @@ def _resolve_cell_count(
     raw_detected: Optional[int],
     germinated_count: int,
     tray_capacity_override: Optional[int],
+    raw_method: str | None = None,
 ) -> tuple[int, str]:
     """Sanity check + fallback hierárquico para contagem de células.
 
@@ -636,9 +1018,9 @@ def _resolve_cell_count(
 
     # 2. Valida detecção automática de células visíveis no enquadramento.
     # Se a contagem empata com as plantas, o algoritmo provavelmente não viu
-    # células vazias. Nesse caso a taxa automática vira "não confirmada".
+    # células vazias. Quando veio da grade real, empate pode ser bandeja 100%.
     if raw_detected is not None:
-        min_plausible = max(2, germinated_count + 1)
+        min_plausible = max(2, germinated_count if raw_method == "grid" else germinated_count + 1)
         if min_plausible <= raw_detected <= 500:
             _cell_detection_stats["success"] += 1
             return raw_detected, "detected_visible"
@@ -780,6 +1162,7 @@ def run_inference(
     clamped_boxes = _dedupe_germination_boxes(clamped_boxes)
     clamped_boxes = _leaf_based_germination_fallback(img_bgr, clamped_boxes, w, h)
     clamped_boxes = _green_component_germination_fallback(img_bgr, clamped_boxes)
+    clamped_boxes = _tiny_green_germination_fallback(img_bgr, clamped_boxes)
     clamped_boxes = _filter_germination_by_green_signal(img_bgr, clamped_boxes)
     clamped_boxes = _split_tall_germination_boxes(img_bgr, clamped_boxes)
     clamped_boxes = _dedupe_germination_boxes(clamped_boxes)
@@ -877,9 +1260,9 @@ def run_inference(
     leaves_total = len(folha_boxes)
     total = len(detections)
 
-    raw_detected = _count_visible_cells(img_bgr)
+    raw_detected, raw_detected_method = _count_visible_cells_with_method(img_bgr, image_quality)
     detected_cells, cells_origin = _resolve_cell_count(
-        raw_detected, germinated_count, tray_capacity_override
+        raw_detected, germinated_count, tray_capacity_override, raw_detected_method
     )
     cells_warning = _cells_warning_message(raw_detected, germinated_count, cells_origin)
 
