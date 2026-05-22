@@ -158,6 +158,54 @@ def _leaves_inside(folha_boxes: list[tuple[int, int, int, int]], germ_bbox: tupl
     return n
 
 
+def _bbox_area(bbox: tuple[int, int, int, int]) -> int:
+    x1, y1, x2, y2 = bbox
+    return max(0, x2 - x1) * max(0, y2 - y1)
+
+
+def _bbox_intersection(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> int:
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    return max(0, ix2 - ix1) * max(0, iy2 - iy1)
+
+
+def _is_duplicate_germination(
+    candidate: tuple[int, int, int, int],
+    kept: tuple[int, int, int, int],
+) -> bool:
+    inter = _bbox_intersection(candidate, kept)
+    if inter <= 0:
+        return False
+    area_candidate = _bbox_area(candidate)
+    area_kept = _bbox_area(kept)
+    union = area_candidate + area_kept - inter
+    iou = inter / max(union, 1)
+    overlap_smaller = inter / max(min(area_candidate, area_kept), 1)
+    return iou >= 0.35 or overlap_smaller >= 0.60
+
+
+def _dedupe_germination_boxes(
+    boxes: list[tuple[str, float, tuple[int, int, int, int]]],
+) -> list[tuple[str, float, tuple[int, int, int, int]]]:
+    """Remove duplicatas da classe Germinacao preservando a box de maior confiança."""
+    germ = [box for box in boxes if box[0] in GERMINATION_CLASSES]
+    others = [box for box in boxes if box[0] not in GERMINATION_CLASSES]
+    kept: list[tuple[str, float, tuple[int, int, int, int]]] = []
+
+    for item in sorted(germ, key=lambda x: x[1], reverse=True):
+        _, _, bbox = item
+        if any(_is_duplicate_germination(bbox, kept_item[2]) for kept_item in kept):
+            continue
+        kept.append(item)
+
+    removed = len(germ) - len(kept)
+    if removed:
+        print(f"  [germ] {removed} duplicata(s) de germinação removida(s)")
+    return kept + others
+
+
 def _count_visible_cells(img_bgr: np.ndarray) -> Optional[int]:
     """Conta células visíveis da bandeja com adaptive threshold (lida com iluminação variada)."""
     gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
@@ -390,9 +438,7 @@ def run_inference(
 
     img_annotated = img_bgr.copy()
 
-    # Primeiro passe: separa boxes por classe (clamp nas bordas)
-    germ_boxes: list[tuple[int, int, int, int, float]] = []
-    folha_boxes: list[tuple[int, int, int, int]] = []
+    # Primeiro passe: clamp nas bordas e dedupe de boxes de germinação.
     clamped_boxes: list[tuple[str, float, tuple[int, int, int, int]]] = []
 
     for d in raw_boxes:
@@ -404,10 +450,17 @@ def run_inference(
         bbox = (x1, y1, x2, y2)
         clamped_boxes.append((cls_name, conf, bbox))
 
-        if cls_name in GERMINATION_CLASSES:
-            germ_boxes.append((x1, y1, x2, y2, conf))
-        elif cls_name == LEAF_CLASS:
-            folha_boxes.append(bbox)
+    clamped_boxes = _dedupe_germination_boxes(clamped_boxes)
+    germ_boxes: list[tuple[int, int, int, int, float]] = [
+        (bbox[0], bbox[1], bbox[2], bbox[3], conf)
+        for cls_name, conf, bbox in clamped_boxes
+        if cls_name in GERMINATION_CLASSES
+    ]
+    folha_boxes: list[tuple[int, int, int, int]] = [
+        bbox
+        for cls_name, _, bbox in clamped_boxes
+        if cls_name == LEAF_CLASS
+    ]
 
     # Ordena clamped_boxes: Germinacao top-down, left-right (centro y depois x)
     # Folhas ficam no final (não recebem plant_id)
