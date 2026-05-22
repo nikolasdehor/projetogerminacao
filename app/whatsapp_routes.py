@@ -462,7 +462,12 @@ def _handle_image_message(client, sender: str, payload: dict, raw_caption: str |
         texto += "\n🌱 *Por planta:*\n"
         for p in sorted(plantas, key=lambda x: x["plant_id"]):
             folhas = p["leaf_count"]
-            texto += f"  #{p['plant_id']}: {folhas} folha{'s' if folhas != 1 else ''} ({p['confidence']*100:.0f}%)\n"
+            folhas_txt = (
+                "folhas não estimadas"
+                if folhas <= 0
+                else f"{folhas} folha{'s' if folhas != 1 else ''}"
+            )
+            texto += f"  #{p['plant_id']}: {folhas_txt} ({p['confidence']*100:.0f}%)\n"
 
     # Envia a imagem resultado com legenda
     result_image_path = Path(current_app.root_path).parent / result["result_image"].lstrip("/")

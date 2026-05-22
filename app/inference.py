@@ -293,6 +293,103 @@ def _green_component_germination_fallback(
     return boxes + additions
 
 
+def _filter_germination_by_green_signal(
+    img_bgr: np.ndarray,
+    boxes: list[tuple[str, float, tuple[int, int, int, int]]],
+) -> list[tuple[str, float, tuple[int, int, int, int]]]:
+    """Descarta boxes de germinação sem tecido vegetal visível."""
+    hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+    kept: list[tuple[str, float, tuple[int, int, int, int]]] = []
+    removed = 0
+
+    for item in boxes:
+        cls_name, _, bbox = item
+        if cls_name not in GERMINATION_CLASSES:
+            kept.append(item)
+            continue
+
+        x1, y1, x2, y2 = bbox
+        area = _bbox_area(bbox)
+        crop = hsv[y1:y2, x1:x2]
+        if crop.size == 0 or area <= 0:
+            removed += 1
+            continue
+        mask = cv2.inRange(crop, (25, 35, 45), (95, 255, 255))
+        green_ratio = cv2.countNonZero(mask) / max(area, 1)
+        if green_ratio < 0.04:
+            removed += 1
+            continue
+        kept.append(item)
+
+    if removed:
+        print(f"  [germ] {removed} box(es) sem sinal verde removida(s)")
+    return kept
+
+
+def _split_tall_germination_boxes(
+    img_bgr: np.ndarray,
+    boxes: list[tuple[str, float, tuple[int, int, int, int]]],
+) -> list[tuple[str, float, tuple[int, int, int, int]]]:
+    """Divide uma box alta quando ela cobre duas mudas separadas."""
+    hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+    h, w = img_bgr.shape[:2]
+    result: list[tuple[str, float, tuple[int, int, int, int]]] = []
+    splits = 0
+
+    for item in boxes:
+        cls_name, conf, bbox = item
+        if cls_name not in GERMINATION_CLASSES:
+            result.append(item)
+            continue
+
+        x1, y1, x2, y2 = bbox
+        bw, bh = x2 - x1, y2 - y1
+        if bw <= 0 or bh <= 0 or bh / max(bw, 1) < 2.2 or _bbox_area(bbox) < 25000:
+            result.append(item)
+            continue
+
+        crop = hsv[y1:y2, x1:x2]
+        mask = cv2.inRange(crop, (25, 35, 45), (95, 255, 255))
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        components: list[tuple[int, int, int, int]] = []
+        for contour in contours:
+            area = cv2.contourArea(contour)
+            if area < max(1800, _bbox_area(bbox) * 0.06):
+                continue
+            cx, cy, cw, ch = cv2.boundingRect(contour)
+            if cw < 45 or ch < 45:
+                continue
+            components.append((x1 + cx, y1 + cy, x1 + cx + cw, y1 + cy + ch))
+
+        components = sorted(components, key=lambda b: (b[1] + b[3]) / 2)
+        if len(components) < 2:
+            result.append(item)
+            continue
+
+        separated = [
+            components[0],
+            *[
+                comp for comp in components[1:]
+                if ((comp[1] + comp[3]) / 2) - ((components[0][1] + components[0][3]) / 2) > bh * 0.22
+            ],
+        ]
+        if len(separated) < 2:
+            result.append(item)
+            continue
+
+        splits += 1
+        for comp in separated:
+            result.append((cls_name, round(max(0.45, min(conf, 0.72)), 3), _expand_bbox(comp, w, h, ratio=0.12)))
+
+    if splits:
+        print(f"  [germ] {splits} box(es) alta(s) dividida(s) por componentes verdes")
+    return result
+
+
 def _count_visible_cells(img_bgr: np.ndarray) -> Optional[int]:
     """Conta células visíveis da bandeja com adaptive threshold (lida com iluminação variada)."""
     gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
@@ -539,6 +636,8 @@ def run_inference(
     clamped_boxes = _dedupe_germination_boxes(clamped_boxes)
     clamped_boxes = _leaf_based_germination_fallback(clamped_boxes, w, h)
     clamped_boxes = _green_component_germination_fallback(img_bgr, clamped_boxes)
+    clamped_boxes = _filter_germination_by_green_signal(img_bgr, clamped_boxes)
+    clamped_boxes = _split_tall_germination_boxes(img_bgr, clamped_boxes)
     clamped_boxes = _dedupe_germination_boxes(clamped_boxes)
     germ_boxes: list[tuple[int, int, int, int, float]] = [
         (bbox[0], bbox[1], bbox[2], bbox[3], conf)
