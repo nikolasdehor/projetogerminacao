@@ -116,7 +116,7 @@ async function runAnalysis() {
     await loadHistory();
     await loadTemporal();
     const rateMsg = data.rate_reliable === false
-      ? `${data.germinated} planta(s) detectada(s); taxa sem base confirmada`
+      ? `${data.germinated} planta(s) detectada(s); taxa parcial`
       : `${data.total_detected} detecção(ões), ${data.germination_rate}% germinação`;
     showToast(rateMsg, 'success');
   } catch(err) {
@@ -139,7 +139,9 @@ function renderResult(data) {
   const mRateSub = $('mRateSub');
   if (mRateSub) {
     const cap = data.cells_detected || data.tray_capacity || 200;
-    if (!rateReliable) {
+    if (data.quality_warning && !rateReliable) {
+      mRateSub.textContent = `${data.germinated} plantas detectadas; foto com leitura parcial`;
+    } else if (!rateReliable) {
       mRateSub.textContent = `${data.germinated} plantas detectadas; total de células não confirmado`;
     } else if (data.rate_scope === 'visible_area') {
       mRateSub.textContent = `${data.germinated} em ${cap} células visíveis`;
@@ -157,7 +159,9 @@ function renderResult(data) {
   if (cellsEl) {
     const cap = data.cells_detected || data.tray_capacity || 200;
     if (!rateReliable) {
-      cellsEl.textContent = `${cap} (padrão, não confirmado)`;
+      cellsEl.textContent = data.rate_scope === 'visible_area'
+        ? `${cap} (visíveis, leitura parcial)`
+        : `${cap} (padrão, não confirmado)`;
     } else if (data.rate_scope === 'visible_area') {
       cellsEl.textContent = `${cap} (visíveis)`;
     } else {

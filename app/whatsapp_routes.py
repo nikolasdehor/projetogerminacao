@@ -381,13 +381,21 @@ def _handle_image_message(client, sender: str, payload: dict, raw_caption: str |
         "fallback_default": "base padrão não confirmada",
     }.get(cells_origin, "células detectadas")
     cells_warning = result.get("cells_warning")
+    quality_level = result.get("quality_level")
+    quality_warning = result.get("quality_warning")
 
     if not rate_reliable:
         emoji = "⚪"
-        avaliacao = (
-            "Leitura parcial: detectei as plantas na imagem, mas não vou classificar a taxa da bandeja "
-            "sem confirmar o total de células."
-        )
+        if quality_level == "low":
+            avaliacao = (
+                "Leitura parcial: a iluminação da foto está crítica, então localizei o que foi possível, "
+                "mas não vou classificar a taxa como confiável."
+            )
+        else:
+            avaliacao = (
+                "Leitura parcial: detectei as plantas na imagem, mas não vou classificar a taxa da bandeja "
+                "sem confirmar o total de células."
+            )
     elif cells_origin in ("detected", "detected_visible"):
         if rate >= 75:
             emoji = "🟢"
@@ -411,7 +419,12 @@ def _handle_image_message(client, sender: str, payload: dict, raw_caption: str |
             "mas confirme se a foto cobre a bandeja inteira."
         )
 
-    if cells_origin == "caption":
+    if not rate_reliable:
+        plants_line = (
+            f"• Plantas localizadas: {germinated}\n"
+            f"• Taxa da bandeja: não confirmada (leitura parcial)\n"
+        )
+    elif cells_origin == "caption":
         plants_line = f"• Plantas germinadas: {germinated} de {capacity} células ({rate}%) [{origem_label}]\n"
     elif cells_origin in ("detected", "detected_visible"):
         plants_line = f"• No recorte: {germinated} plantas em {capacity} células visíveis ({rate}%)\n"
@@ -421,12 +434,14 @@ def _handle_image_message(client, sender: str, payload: dict, raw_caption: str |
             f"• Taxa da bandeja: não confirmada (células visíveis não contadas com segurança)\n"
         )
 
+    warnings = []
+    if quality_warning:
+        warnings.append(f"_⚠️ {quality_warning}_")
     if cells_warning:
-        warning_linha = f"\n{cells_warning}"
-    elif cells_origin in ("detected", "detected_visible"):
-        warning_linha = "\n_ℹ️ Taxa calculada só sobre o recorte visível, não sobre a bandeja inteira._"
-    else:
-        warning_linha = ""
+        warnings.append(cells_warning)
+    elif cells_origin in ("detected", "detected_visible") and rate_reliable:
+        warnings.append("_ℹ️ Taxa calculada só sobre o recorte visível, não sobre a bandeja inteira._")
+    warning_linha = "\n" + "\n".join(warnings) if warnings else ""
 
     texto = (
         f"🌱 *Análise da Bandeja — GerminaVision*\n"

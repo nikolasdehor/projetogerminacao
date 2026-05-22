@@ -70,6 +70,97 @@ def _normalize_lighting(img_bgr: np.ndarray) -> np.ndarray:
     return result
 
 
+def _assess_image_quality(img_bgr: np.ndarray) -> dict:
+    """Classifica iluminação crítica antes de calcular taxa de germinação."""
+    b, g, r = [img_bgr[:, :, i].astype(np.float32) for i in range(3)]
+    max_ch = np.max(img_bgr, axis=2)
+
+    magenta_ratio = float(((r > g * 1.35) & (b > g * 1.05) & (r > 120)).mean())
+    red_cast_ratio = float(((r > g * 1.45) & (r > b * 1.10) & (r > 130)).mean())
+    purple_ratio = float(((b > g * 1.25) & (r > g * 1.10) & (b > 80)).mean())
+    clipped_ratio = float((max_ch > 245).mean())
+    green_to_red = float(g.mean() / max(r.mean(), 1.0))
+    green_to_blue = float(g.mean() / max(b.mean(), 1.0))
+
+    if (
+        magenta_ratio >= 0.35
+        or red_cast_ratio >= 0.45
+        or (clipped_ratio >= 0.22 and green_to_red < 0.70 and green_to_blue < 0.85)
+    ):
+        return {
+            "level": "low",
+            "issue": "led_magenta",
+            "score": round(max(0.0, 1.0 - magenta_ratio - clipped_ratio), 2),
+            "warning": (
+                "Foto com LED magenta/estouro de cor. Localizei o que foi possível, "
+                "mas a taxa fica como leitura parcial. Para melhor precisão, use luz branca "
+                "ou reduza a intensidade do LED."
+            ),
+        }
+
+    if purple_ratio >= 0.20 or (green_to_blue < 0.78 and clipped_ratio >= 0.04):
+        return {
+            "level": "medium",
+            "issue": "led_purple",
+            "score": 0.72,
+            "warning": (
+                "Iluminação roxa detectada. A análise foi corrigida por filtros, "
+                "mas uma foto com luz mais neutra tende a melhorar a contagem."
+            ),
+        }
+
+    return {"level": "good", "issue": None, "score": 1.0, "warning": None}
+
+
+def _enhance_for_yolo(img_bgr: np.ndarray, quality: dict) -> np.ndarray:
+    """Aplica filtros leves antes do YOLO, preservando a imagem original para anotação."""
+    result = _normalize_lighting(img_bgr)
+
+    if quality.get("issue") == "led_magenta":
+        b, g, r = cv2.split(result.astype(np.float32))
+        rb_mean = (r + b) / 2.0
+        g = np.clip(g * 1.25 + rb_mean * 0.10, 0, 255)
+        r = np.clip(r * 0.90, 0, 255)
+        b = np.clip(b * 0.95, 0, 255)
+        result = cv2.merge([b, g, r]).astype(np.uint8)
+        result = _normalize_lighting(result)
+        print("  Realce anti-LED magenta aplicado para inferência")
+
+    return result
+
+
+def _plant_mask_from_hsv(hsv: np.ndarray, include_led_shadow: bool = True) -> np.ndarray:
+    """Máscara de tecido vegetal em luz normal e em LED roxo sem usar fundo claro."""
+    bright_green = cv2.inRange(hsv, (25, 35, 45), (95, 255, 255))
+    if not include_led_shadow:
+        return bright_green
+
+    # Sob LED roxo, folhas escuras migram para H 90-135 e perdem o verde clássico.
+    # O teto de V evita que plástico branco/rosa estourado vire planta.
+    led_shadow = cv2.inRange(hsv, (80, 18, 25), (135, 255, 225))
+    return cv2.bitwise_or(bright_green, led_shadow)
+
+
+def _plant_signal_ratio(hsv_crop: np.ndarray) -> float:
+    if hsv_crop.size == 0:
+        return 0.0
+    area = hsv_crop.shape[0] * hsv_crop.shape[1]
+    mask = _plant_mask_from_hsv(hsv_crop)
+    return float(cv2.countNonZero(mask)) / max(area, 1)
+
+
+def _is_bright_nonplant_artifact(hsv_crop: np.ndarray) -> bool:
+    """Remove reflexos/LED/plástico claro que entram na faixa roxa, mas não têm verde real."""
+    if hsv_crop.size == 0:
+        return False
+    area = hsv_crop.shape[0] * hsv_crop.shape[1]
+    v = hsv_crop[:, :, 2]
+    bright_green = _plant_mask_from_hsv(hsv_crop, include_led_shadow=False)
+    bright_green_ratio = float(cv2.countNonZero(bright_green)) / max(area, 1)
+    clipped_ratio = float((v > 235).mean())
+    return bright_green_ratio < 0.03 and (float(v.mean()) > 210 or clipped_ratio > 0.35)
+
+
 # ── Config de classes ────────────────────────────────────────────────────────
 # Dataset morango v2: 2 classes (Germinacao = planta germinada, Folha = folha individual)
 CLASS_COLORS = {
@@ -224,14 +315,17 @@ def _expand_bbox(
 
 
 def _leaf_based_germination_fallback(
+    img_bgr: np.ndarray,
     boxes: list[tuple[str, float, tuple[int, int, int, int]]],
     w: int,
     h: int,
 ) -> list[tuple[str, float, tuple[int, int, int, int]]]:
     """Promove folha grande sem planta associada para germinação provável."""
+    hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
     germ_boxes = [bbox for cls_name, _, bbox in boxes if cls_name in GERMINATION_CLASSES]
     additions: list[tuple[str, float, tuple[int, int, int, int]]] = []
-    min_area = max(12000, int(w * h * 0.008))
+    regular_min_area = max(12000, int(w * h * 0.008))
+    small_led_min_area = max(3000, int(w * h * 0.002))
 
     for cls_name, conf, bbox in boxes:
         if cls_name != LEAF_CLASS:
@@ -239,7 +333,24 @@ def _leaf_based_germination_fallback(
         x1, y1, x2, y2 = bbox
         box_w, box_h = x2 - x1, y2 - y1
         area = _bbox_area(bbox)
-        if area < min_area or box_w < 70 or box_h < 70:
+        crop = hsv[y1:y2, x1:x2]
+        if _is_bright_nonplant_artifact(crop):
+            continue
+        plant_ratio = _plant_signal_ratio(crop)
+        regular_leaf = (
+            area >= regular_min_area
+            and box_w >= 70
+            and box_h >= 70
+            and plant_ratio >= 0.04
+        )
+        small_led_leaf = (
+            conf >= 0.50
+            and area >= small_led_min_area
+            and box_w >= 45
+            and box_h >= 45
+            and plant_ratio >= 0.12
+        )
+        if not (regular_leaf or small_led_leaf):
             continue
         if any(_is_duplicate_germination(bbox, germ_bbox) for germ_bbox in germ_boxes):
             continue
@@ -299,6 +410,7 @@ def _filter_germination_by_green_signal(
 ) -> list[tuple[str, float, tuple[int, int, int, int]]]:
     """Descarta boxes de germinação sem tecido vegetal visível."""
     hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+    img_h, img_w = img_bgr.shape[:2]
     kept: list[tuple[str, float, tuple[int, int, int, int]]] = []
     removed = 0
 
@@ -314,9 +426,17 @@ def _filter_germination_by_green_signal(
         if crop.size == 0 or area <= 0:
             removed += 1
             continue
-        mask = cv2.inRange(crop, (25, 35, 45), (95, 255, 255))
-        green_ratio = cv2.countNonZero(mask) / max(area, 1)
-        if green_ratio < 0.04:
+        bright_mask = _plant_mask_from_hsv(crop, include_led_shadow=False)
+        bright_ratio = cv2.countNonZero(bright_mask) / max(area, 1)
+        plant_ratio = _plant_signal_ratio(crop)
+        if plant_ratio < 0.04 or _is_bright_nonplant_artifact(crop):
+            removed += 1
+            continue
+        if bright_ratio < 0.03 and plant_ratio < 0.20:
+            removed += 1
+            continue
+        touches_edge = x1 <= 2 or y1 <= 2 or x2 >= img_w - 2 or y2 >= img_h - 2
+        if bright_ratio < 0.03 and (area < 2500 or (touches_edge and area < 5000)):
             removed += 1
             continue
         kept.append(item)
@@ -349,7 +469,7 @@ def _split_tall_germination_boxes(
             continue
 
         crop = hsv[y1:y2, x1:x2]
-        mask = cv2.inRange(crop, (25, 35, 45), (95, 255, 255))
+        mask = _plant_mask_from_hsv(crop, include_led_shadow=False)
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
@@ -557,13 +677,16 @@ def run_inference(
         img_bgr = cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
 
     h, w = img_bgr.shape[:2]
+    image_quality = _assess_image_quality(img_bgr)
     # SAHI ajuda em fotos grandes, mas em recortes pequenos (ex: 512x512)
     # tende a gerar caixas largas atravessando várias células.
     use_sahi = _SAHI_AVAILABLE and min(h, w) >= 640
     print(f"  Inferencia {'SAHI (tiles)' if use_sahi else 'direta'} em {w}x{h}")
+    if image_quality.get("warning"):
+        print(f"  [quality] {image_quality['level']}: {image_quality['issue']}")
 
     # Normaliza iluminação para inferência (original preservado para anotação visual)
-    img_for_inference = _normalize_lighting(img_bgr)
+    img_for_inference = _enhance_for_yolo(img_bgr, image_quality)
 
     # Salva imagem normalizada em arquivo temporário para SAHI (que exige path)
     norm_path = img_path.with_name(f"_norm_{img_path.name}")
@@ -636,7 +759,7 @@ def run_inference(
         clamped_boxes.append((cls_name, conf, bbox))
 
     clamped_boxes = _dedupe_germination_boxes(clamped_boxes)
-    clamped_boxes = _leaf_based_germination_fallback(clamped_boxes, w, h)
+    clamped_boxes = _leaf_based_germination_fallback(img_bgr, clamped_boxes, w, h)
     clamped_boxes = _green_component_germination_fallback(img_bgr, clamped_boxes)
     clamped_boxes = _filter_germination_by_green_signal(img_bgr, clamped_boxes)
     clamped_boxes = _split_tall_germination_boxes(img_bgr, clamped_boxes)
@@ -685,6 +808,10 @@ def run_inference(
             # Usa o maior sinal: YOLO pode subestimar (não detectou todas as Folhas),
             # contorno pode subestimar (threshold colapsou peaks sobrepostos)
             leaf_n = max(leaf_yolo, leaf_contour)
+            if leaf_n <= 0 and crop.size:
+                crop_hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+                if _plant_signal_ratio(crop_hsv) >= 0.18:
+                    leaf_n = 1
             leaf_counts.append(leaf_n)
             label = f"#{plant_id}"
             germinated = True
@@ -751,6 +878,8 @@ def run_inference(
         "fallback_default": "default_capacity",
     }.get(cells_origin, "visible_area")
 
+    rate_reliable = cells_origin != "fallback_default" and image_quality.get("level") != "low"
+
     return {
         "total_detected":   total,
         "germinated":       germinated_count,
@@ -758,8 +887,11 @@ def run_inference(
         "cells_detected":   detected_cells,
         "cells_origin":     cells_origin,
         "cells_warning":    cells_warning,
-        "rate_reliable":    cells_origin != "fallback_default",
+        "rate_reliable":    rate_reliable,
         "rate_scope":       rate_scope,
+        "image_quality":    image_quality,
+        "quality_level":    image_quality.get("level"),
+        "quality_warning":  image_quality.get("warning"),
         "leaf_avg":         leaf_avg,
         "total_folhas_estimadas": int(round(leaf_avg * germinated_count)),
         "leaf_counts":      leaf_counts,
