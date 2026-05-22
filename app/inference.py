@@ -88,6 +88,99 @@ def _reconstruct_magenta_for_yolo(img_bgr: np.ndarray) -> np.ndarray:
     return pseudo_green
 
 
+def _naturalize_magenta_for_display(
+    img_bgr: np.ndarray,
+    _enhanced_bgr: np.ndarray,
+    germ_boxes: list[tuple[int, int, int, int, float]] | None = None,
+) -> np.ndarray:
+    """Cria uma visualização naturalizada para fotos magenta extremas.
+
+    Não recupera a cor real: recoloriza por luminância e pelas plantas aceitas
+    no pós-processamento para devolver uma imagem legível ao usuário.
+    """
+    b, g, r = cv2.split(img_bgr.astype(np.float32))
+    intensity = 0.35 * b + 0.15 * g + 0.50 * r
+    intensity = cv2.normalize(intensity, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    light = cv2.createCLAHE(clipLimit=1.5, tileGridSize=(8, 8)).apply(intensity)
+    light_f = light.astype(np.float32) / 255.0
+
+    # Base marrom para substrato, preservando textura pela luminância.
+    natural = np.zeros_like(img_bgr)
+    natural[:, :, 0] = np.clip(18 + light_f * 34, 0, 255).astype(np.uint8)
+    natural[:, :, 1] = np.clip(22 + light_f * 45, 0, 255).astype(np.uint8)
+    natural[:, :, 2] = np.clip(28 + light_f * 58, 0, 255).astype(np.uint8)
+
+    lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB)
+    hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+    grid_mask = ((lab[:, :, 0] > 150) & (hsv[:, :, 2] > 230)).astype(np.uint8) * 255
+    grid_mask = cv2.morphologyEx(
+        grid_mask,
+        cv2.MORPH_OPEN,
+        cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2)),
+    )
+    grid_mask = cv2.morphologyEx(
+        grid_mask,
+        cv2.MORPH_CLOSE,
+        cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)),
+    )
+    natural[grid_mask > 0] = (228, 228, 220)
+
+    # Regiões muito escuras/fora da bandeja voltam para preto/cinza.
+    dark_mask = (light < 28) & (grid_mask == 0)
+    natural[dark_mask] = (18, 20, 20)
+
+    if germ_boxes:
+        # A imagem reconstruída ajuda o YOLO, mas para visualização o cinza
+        # original preserva melhor as formas escuras das folhas sob LED magenta.
+        source_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+        for x1, y1, x2, y2, _conf in germ_boxes:
+            if x2 <= x1 or y2 <= y1:
+                continue
+            crop_gray = source_gray[y1:y2, x1:x2]
+            crop_grid = grid_mask[y1:y2, x1:x2] > 0
+            if crop_gray.size == 0:
+                continue
+            blurred = cv2.GaussianBlur(crop_gray, (7, 7), 0)
+            valid_pixels = blurred[~crop_grid]
+            if valid_pixels.size < 20:
+                continue
+            threshold = float(np.percentile(valid_pixels, 12))
+            plant_mask = (blurred <= threshold) & (~crop_grid)
+            plant_mask = cv2.morphologyEx(
+                plant_mask.astype(np.uint8) * 255,
+                cv2.MORPH_OPEN,
+                cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)),
+            )
+            plant_mask = cv2.morphologyEx(
+                plant_mask,
+                cv2.MORPH_CLOSE,
+                cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)),
+            )
+            plant_alpha = cv2.GaussianBlur(
+                plant_mask,
+                (7, 7),
+                0,
+            ).astype(np.float32) / 255.0
+            plant_alpha *= 0.72
+            if plant_alpha.max() <= 0:
+                continue
+
+            crop_natural = natural[y1:y2, x1:x2].astype(np.float32)
+            leaf_texture = (255 - crop_gray).astype(np.float32) / 255.0
+            leaf_color = np.zeros_like(crop_natural)
+            leaf_color[:, :, 0] = 20 + leaf_texture * 15
+            leaf_color[:, :, 1] = 85 + leaf_texture * 85
+            leaf_color[:, :, 2] = 20 + leaf_texture * 35
+            crop_natural = (
+                crop_natural * (1.0 - plant_alpha[:, :, None])
+                + leaf_color * plant_alpha[:, :, None]
+            )
+            natural[y1:y2, x1:x2] = np.clip(crop_natural, 0, 255).astype(np.uint8)
+
+    print("  Visualização naturalizada anti-magenta aplicada")
+    return natural
+
+
 def _assess_image_quality(img_bgr: np.ndarray) -> dict:
     """Classifica iluminação crítica antes de calcular taxa de germinação."""
     b, g, r = [img_bgr[:, :, i].astype(np.float32) for i in range(3)]
@@ -1223,8 +1316,6 @@ def run_inference(
         except Exception:
             pass
 
-    img_annotated = img_for_inference.copy() if magenta_mode else img_bgr.copy()
-
     # Primeiro passe: clamp nas bordas e dedupe de boxes de germinação.
     clamped_boxes: list[tuple[str, float, tuple[int, int, int, int]]] = []
 
@@ -1259,6 +1350,11 @@ def run_inference(
         for cls_name, _, bbox in clamped_boxes
         if cls_name == LEAF_CLASS
     ]
+    img_annotated = (
+        _naturalize_magenta_for_display(img_bgr, img_for_inference, germ_boxes)
+        if magenta_mode
+        else img_bgr.copy()
+    )
 
     # Ordena clamped_boxes: Germinacao top-down, left-right (centro y depois x)
     # Folhas ficam no final (não recebem plant_id)
