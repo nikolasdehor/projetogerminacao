@@ -557,7 +557,9 @@ def run_inference(
         img_bgr = cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
 
     h, w = img_bgr.shape[:2]
-    use_sahi = _SAHI_AVAILABLE and min(h, w) >= 400
+    # SAHI ajuda em fotos grandes, mas em recortes pequenos (ex: 512x512)
+    # tende a gerar caixas largas atravessando várias células.
+    use_sahi = _SAHI_AVAILABLE and min(h, w) >= 640
     print(f"  Inferencia {'SAHI (tiles)' if use_sahi else 'direta'} em {w}x{h}")
 
     # Normaliza iluminação para inferência (original preservado para anotação visual)
