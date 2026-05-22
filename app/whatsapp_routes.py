@@ -408,7 +408,7 @@ def _handle_image_message(client, sender: str, payload: dict, raw_caption: str |
     else:
         plants_line = (
             f"• Plantas germinadas detectadas: {germinated}\n"
-            f"• Taxa da bandeja: não confirmada ({capacity} células padrão, foto pode ser parcial)\n"
+            f"• Taxa da bandeja: não confirmada (células visíveis não contadas com segurança)\n"
         )
 
     warning_linha = f"\n{cells_warning}" if cells_warning else ""
@@ -436,7 +436,7 @@ def _handle_image_message(client, sender: str, payload: dict, raw_caption: str |
             "Germinacao": "🌱",
             "Folha": "🍃",
         }
-        class_display = {"Germinacao": "Germinação", "Folha": "Folhas YOLO"}
+        class_display = {"Germinacao": "Germinação", "Folha": "Folhas detectadas"}
         for cls, count in sorted(classes_count.items(), key=lambda x: -x[1]):
             emoji_cls = class_emojis.get(cls, "•")
             label = class_display.get(cls, cls)

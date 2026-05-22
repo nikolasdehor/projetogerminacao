@@ -206,6 +206,53 @@ def _dedupe_germination_boxes(
     return kept + others
 
 
+def _expand_bbox(
+    bbox: tuple[int, int, int, int],
+    w: int,
+    h: int,
+    ratio: float = 0.04,
+) -> tuple[int, int, int, int]:
+    x1, y1, x2, y2 = bbox
+    pad_x = int((x2 - x1) * ratio)
+    pad_y = int((y2 - y1) * ratio)
+    return (
+        max(0, x1 - pad_x),
+        max(0, y1 - pad_y),
+        min(w, x2 + pad_x),
+        min(h, y2 + pad_y),
+    )
+
+
+def _leaf_based_germination_fallback(
+    boxes: list[tuple[str, float, tuple[int, int, int, int]]],
+    w: int,
+    h: int,
+) -> list[tuple[str, float, tuple[int, int, int, int]]]:
+    """Promove folha grande sem planta associada para germinação provável."""
+    germ_boxes = [bbox for cls_name, _, bbox in boxes if cls_name in GERMINATION_CLASSES]
+    additions: list[tuple[str, float, tuple[int, int, int, int]]] = []
+    min_area = max(12000, int(w * h * 0.008))
+
+    for cls_name, conf, bbox in boxes:
+        if cls_name != LEAF_CLASS:
+            continue
+        x1, y1, x2, y2 = bbox
+        box_w, box_h = x2 - x1, y2 - y1
+        area = _bbox_area(bbox)
+        if area < min_area or box_w < 70 or box_h < 70:
+            continue
+        if any(_is_duplicate_germination(bbox, germ_bbox) for germ_bbox in germ_boxes):
+            continue
+        if any(_is_duplicate_germination(bbox, item[2]) for item in additions):
+            continue
+        derived_conf = round(max(0.35, min(conf * 0.85, 0.62)), 3)
+        additions.append(("Germinacao", derived_conf, _expand_bbox(bbox, w, h)))
+
+    if additions:
+        print(f"  [germ] {len(additions)} germinação provável adicionada por fallback de folhas")
+    return boxes + additions
+
+
 def _count_visible_cells(img_bgr: np.ndarray) -> Optional[int]:
     """Conta células visíveis da bandeja com adaptive threshold (lida com iluminação variada)."""
     gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
@@ -331,14 +378,13 @@ def _resolve_cell_count(
         return tray_capacity_override, "caption"
 
     # 2. Valida detecção automática de células visíveis no enquadramento.
-    # Em fotos parciais, a área fotografada pode ter taxa alta, então não
-    # exigimos plants*3. A única condição dura é ter pelo menos tantas células
-    # quanto plantas detectadas.
+    # Se a contagem empata com as plantas, o algoritmo provavelmente não viu
+    # células vazias. Nesse caso a taxa automática vira "não confirmada".
     if raw_detected is not None:
-        min_plausible = max(2, germinated_count)
+        min_plausible = max(2, germinated_count + 1)
         if min_plausible <= raw_detected <= 500:
             _cell_detection_stats["success"] += 1
-            return max(raw_detected, germinated_count), "detected_visible"
+            return raw_detected, "detected_visible"
         print(
             f"  [cells] Detecção anômala descartada: {raw_detected} "
             f"(germinadas={germinated_count}, mín plausível={min_plausible})"
@@ -450,6 +496,8 @@ def run_inference(
         bbox = (x1, y1, x2, y2)
         clamped_boxes.append((cls_name, conf, bbox))
 
+    clamped_boxes = _dedupe_germination_boxes(clamped_boxes)
+    clamped_boxes = _leaf_based_germination_fallback(clamped_boxes, w, h)
     clamped_boxes = _dedupe_germination_boxes(clamped_boxes)
     germ_boxes: list[tuple[int, int, int, int, float]] = [
         (bbox[0], bbox[1], bbox[2], bbox[3], conf)
