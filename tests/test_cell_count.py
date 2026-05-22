@@ -10,7 +10,9 @@ from app.inference import (
     _count_visible_cells_by_grid,
     _count_visible_cells_with_method,
     _assess_image_quality,
+    _enhance_for_yolo,
     _leaf_based_germination_fallback,
+    _plant_signal_ratio,
     _resolve_cell_count,
     _tiny_green_germination_fallback,
 )
@@ -52,6 +54,19 @@ class CellCountRegressionTest(unittest.TestCase):
         self.assertEqual(_count_visible_cells_by_contours(image), 13)
         self.assertEqual(_count_visible_cells_by_grid(image), 12)
         self.assertEqual(_count_visible_cells_with_method(image), (12, "grid"))
+
+    def test_magenta_reconstruction_restores_plant_signal_for_inference(self):
+        image = load_image("tests/fixtures/images/magenta-full-tray.jpeg")
+        quality = _assess_image_quality(image)
+        self.assertEqual(quality["issue"], "led_magenta")
+
+        x1, y1, x2, y2 = (631, 1156, 716, 1245)
+        original_crop = cv2.cvtColor(image[y1:y2, x1:x2], cv2.COLOR_BGR2HSV)
+        enhanced = _enhance_for_yolo(image, quality)
+        enhanced_crop = cv2.cvtColor(enhanced[y1:y2, x1:x2], cv2.COLOR_BGR2HSV)
+
+        self.assertEqual(_plant_signal_ratio(original_crop), 0.0)
+        self.assertGreaterEqual(_plant_signal_ratio(enhanced_crop), 0.40)
 
     def test_side_cropped_purple_tray_does_not_count_border_slivers(self):
         image = load_image("tests/fixtures/images/side-crop-purple-12-cells.jpeg")

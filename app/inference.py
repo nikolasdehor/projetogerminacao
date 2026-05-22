@@ -70,6 +70,24 @@ def _normalize_lighting(img_bgr: np.ndarray) -> np.ndarray:
     return result
 
 
+def _reconstruct_magenta_for_yolo(img_bgr: np.ndarray) -> np.ndarray:
+    """Reconstrói contraste de planta em LED magenta extremo para o YOLO."""
+    b, g, r = cv2.split(img_bgr.astype(np.float32))
+    intensity = 0.35 * b + 0.15 * g + 0.50 * r
+    intensity = cv2.normalize(intensity, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    inverse = cv2.GaussianBlur(255 - intensity, (3, 3), 0)
+
+    clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+    l_ch = clahe.apply(intensity)
+    pseudo_green = cv2.merge([
+        np.clip(l_ch.astype(np.float32) * 0.65, 0, 255).astype(np.uint8),
+        np.clip(l_ch.astype(np.float32) * 0.85 + inverse.astype(np.float32) * 0.45, 0, 255).astype(np.uint8),
+        np.clip(l_ch.astype(np.float32) * 0.65, 0, 255).astype(np.uint8),
+    ])
+    print("  Reconstrução anti-LED magenta aplicada para inferência")
+    return pseudo_green
+
+
 def _assess_image_quality(img_bgr: np.ndarray) -> dict:
     """Classifica iluminação crítica antes de calcular taxa de germinação."""
     b, g, r = [img_bgr[:, :, i].astype(np.float32) for i in range(3)]
@@ -114,18 +132,10 @@ def _assess_image_quality(img_bgr: np.ndarray) -> dict:
 
 def _enhance_for_yolo(img_bgr: np.ndarray, quality: dict) -> np.ndarray:
     """Aplica filtros leves antes do YOLO, preservando a imagem original para anotação."""
-    result = _normalize_lighting(img_bgr)
-
     if quality.get("issue") == "led_magenta":
-        b, g, r = cv2.split(result.astype(np.float32))
-        rb_mean = (r + b) / 2.0
-        g = np.clip(g * 1.25 + rb_mean * 0.10, 0, 255)
-        r = np.clip(r * 0.90, 0, 255)
-        b = np.clip(b * 0.95, 0, 255)
-        result = cv2.merge([b, g, r]).astype(np.uint8)
-        result = _normalize_lighting(result)
-        print("  Realce anti-LED magenta aplicado para inferência")
+        return _reconstruct_magenta_for_yolo(img_bgr)
 
+    result = _normalize_lighting(img_bgr)
     return result
 
 
@@ -832,6 +842,70 @@ def _tiny_green_germination_fallback(
     return boxes + additions
 
 
+def _magenta_grid_roi(img_bgr: np.ndarray) -> tuple[int, int, int, int] | None:
+    """Estima a área útil da bandeja em fotos magenta extremas."""
+    h, w = img_bgr.shape[:2]
+    lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB)
+    lightness = lab[:, :, 0]
+    mask = (lightness > 140).astype(np.uint8) * 255
+    mask = cv2.morphologyEx(
+        mask,
+        cv2.MORPH_CLOSE,
+        cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)),
+    )
+    vertical_mask = cv2.morphologyEx(
+        mask,
+        cv2.MORPH_OPEN,
+        cv2.getStructuringElement(cv2.MORPH_RECT, (3, max(20, int(h * 0.05)))),
+    )
+    horizontal_mask = cv2.morphologyEx(
+        mask,
+        cv2.MORPH_OPEN,
+        cv2.getStructuringElement(cv2.MORPH_RECT, (max(20, int(w * 0.05)), 3)),
+    )
+    vertical_bands = _merge_nearby_bands(_projection_bands(vertical_mask.mean(axis=0) / 255.0, w, min_width=2), w)
+    horizontal_bands = _merge_nearby_bands(_projection_bands(horizontal_mask.mean(axis=1) / 255.0, h, min_width=2), h)
+    if len(vertical_bands) < 3 or len(horizontal_bands) < 3:
+        return None
+
+    def _bounds(bands: list[tuple[int, int, float, float]], length: int) -> tuple[int, int]:
+        centers = np.array([band[2] for band in bands], dtype=np.float32)
+        gaps = np.diff(centers)
+        spacing = float(np.median(gaps[gaps < length * 0.18])) if np.any(gaps < length * 0.18) else float(np.median(gaps))
+        margin = max(12, int(spacing * 0.55))
+        return max(0, int(round(float(centers[0]) - margin))), min(length, int(round(float(centers[-1]) + margin)))
+
+    x1, x2 = _bounds(vertical_bands, w)
+    y1, y2 = _bounds(horizontal_bands, h)
+    return (x1, y1, x2, y2)
+
+
+def _filter_germination_centers_by_roi(
+    boxes: list[tuple[str, float, tuple[int, int, int, int]]],
+    roi: tuple[int, int, int, int] | None,
+) -> list[tuple[str, float, tuple[int, int, int, int]]]:
+    if roi is None:
+        return boxes
+
+    rx1, ry1, rx2, ry2 = roi
+    kept: list[tuple[str, float, tuple[int, int, int, int]]] = []
+    removed = 0
+    for item in boxes:
+        cls_name, _conf, bbox = item
+        if cls_name not in GERMINATION_CLASSES:
+            kept.append(item)
+            continue
+        x1, y1, x2, y2 = bbox
+        cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+        if rx1 <= cx <= rx2 and ry1 <= cy <= ry2:
+            kept.append(item)
+        else:
+            removed += 1
+    if removed:
+        print(f"  [germ] {removed} box(es) fora da área útil da grade removida(s)")
+    return kept
+
+
 def _count_visible_cells_by_grid(img_bgr: np.ndarray) -> Optional[int]:
     """Conta células por linhas da grade branca quando a bandeja está visível."""
     h, w = img_bgr.shape[:2]
@@ -1082,6 +1156,7 @@ def run_inference(
 
     h, w = img_bgr.shape[:2]
     image_quality = _assess_image_quality(img_bgr)
+    magenta_mode = image_quality.get("issue") == "led_magenta"
     # SAHI ajuda em fotos grandes, mas em recortes pequenos (ex: 512x512)
     # tende a gerar caixas largas atravessando várias células.
     use_sahi = _SAHI_AVAILABLE and min(h, w) >= 640
@@ -1106,8 +1181,8 @@ def run_inference(
             names = class_names or fallback_names
             raw_boxes = _run_inference_sahi(norm_path, model_path, names)
             # Filtro class-aware: Germinacao aceita -0.07, Folha aceita -0.10
-            germ_conf = max(0.12, conf_threshold - 0.13)
-            folha_conf = max(0.15, conf_threshold - 0.10)
+            germ_conf = max(0.55, conf_threshold + 0.30) if magenta_mode else max(0.12, conf_threshold - 0.13)
+            folha_conf = max(0.20, conf_threshold - 0.05) if magenta_mode else max(0.15, conf_threshold - 0.10)
             raw_boxes = [
                 d for d in raw_boxes
                 if (d["cls_name"] == "Germinacao" and d["conf"] >= germ_conf)
@@ -1116,7 +1191,7 @@ def run_inference(
             ]
         else:
             # Usa conf mais baixo no predict para capturar Germinacoes e Folhas periféricas
-            folha_conf = max(0.15, conf_threshold - 0.10)
+            folha_conf = max(0.20, conf_threshold - 0.05) if magenta_mode else max(0.15, conf_threshold - 0.10)
             results = model.predict(
                 source=img_for_inference,
                 conf=folha_conf,
@@ -1134,7 +1209,7 @@ def run_inference(
                 x1, y1, x2, y2 = [int(v) for v in xyxy]
                 raw_boxes.append({"cls_name": cls_name, "conf": conf, "bbox": (x1, y1, x2, y2)})
             # Filtro class-aware: Germinacao aceita -0.07, Folha aceita -0.10
-            germ_conf = max(0.12, conf_threshold - 0.13)
+            germ_conf = max(0.55, conf_threshold + 0.30) if magenta_mode else max(0.12, conf_threshold - 0.13)
             raw_boxes = [
                 d for d in raw_boxes
                 if (d["cls_name"] == "Germinacao" and d["conf"] >= germ_conf)
@@ -1148,7 +1223,7 @@ def run_inference(
         except Exception:
             pass
 
-    img_annotated = img_bgr.copy()
+    img_annotated = img_for_inference.copy() if magenta_mode else img_bgr.copy()
 
     # Primeiro passe: clamp nas bordas e dedupe de boxes de germinação.
     clamped_boxes: list[tuple[str, float, tuple[int, int, int, int]]] = []
@@ -1163,12 +1238,16 @@ def run_inference(
         clamped_boxes.append((cls_name, conf, bbox))
 
     clamped_boxes = _dedupe_germination_boxes(clamped_boxes)
-    clamped_boxes = _leaf_based_germination_fallback(img_bgr, clamped_boxes, w, h)
-    clamped_boxes = _green_component_germination_fallback(img_bgr, clamped_boxes)
-    if image_quality.get("issue") in {"led_purple", "led_magenta"}:
-        clamped_boxes = _tiny_green_germination_fallback(img_bgr, clamped_boxes)
-    clamped_boxes = _filter_germination_by_green_signal(img_bgr, clamped_boxes)
-    clamped_boxes = _split_tall_germination_boxes(img_bgr, clamped_boxes)
+    signal_img_bgr = img_for_inference if magenta_mode else img_bgr
+    if magenta_mode:
+        clamped_boxes = _filter_germination_centers_by_roi(clamped_boxes, _magenta_grid_roi(img_bgr))
+    if not magenta_mode:
+        clamped_boxes = _leaf_based_germination_fallback(img_bgr, clamped_boxes, w, h)
+        clamped_boxes = _green_component_germination_fallback(img_bgr, clamped_boxes)
+        if image_quality.get("issue") in {"led_purple", "led_magenta"}:
+            clamped_boxes = _tiny_green_germination_fallback(img_bgr, clamped_boxes)
+    clamped_boxes = _filter_germination_by_green_signal(signal_img_bgr, clamped_boxes)
+    clamped_boxes = _split_tall_germination_boxes(signal_img_bgr, clamped_boxes)
     clamped_boxes = _dedupe_germination_boxes(clamped_boxes)
     germ_boxes: list[tuple[int, int, int, int, float]] = [
         (bbox[0], bbox[1], bbox[2], bbox[3], conf)
@@ -1210,12 +1289,13 @@ def run_inference(
             plant_id += 1
             leaf_yolo = _leaves_inside(folha_boxes, bbox)
             crop = img_bgr[y1:y2, x1:x2]
-            leaf_contour = _estimate_leaves_by_contours(crop)
+            signal_crop = signal_img_bgr[y1:y2, x1:x2]
+            leaf_contour = _estimate_leaves_by_contours(signal_crop)
             # Usa o maior sinal: YOLO pode subestimar (não detectou todas as Folhas),
             # contorno pode subestimar (threshold colapsou peaks sobrepostos)
             leaf_n = max(leaf_yolo, leaf_contour)
-            if leaf_n <= 0 and crop.size:
-                crop_hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+            if leaf_n <= 0 and signal_crop.size:
+                crop_hsv = cv2.cvtColor(signal_crop, cv2.COLOR_BGR2HSV)
                 if _plant_signal_ratio(crop_hsv) >= 0.18:
                     leaf_n = 1
             leaf_counts.append(leaf_n)
