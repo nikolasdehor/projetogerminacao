@@ -50,6 +50,10 @@ def init_db(db_path: str) -> None:
             "ALTER TABLE analyses ADD COLUMN source TEXT",
             "ALTER TABLE analyses ADD COLUMN sender TEXT",
             "ALTER TABLE analyses ADD COLUMN caption TEXT",
+            "ALTER TABLE analyses ADD COLUMN cells_count INTEGER",
+            "ALTER TABLE analyses ADD COLUMN cells_origin TEXT",
+            "ALTER TABLE analyses ADD COLUMN rate_reliable INTEGER NOT NULL DEFAULT 1",
+            "ALTER TABLE analyses ADD COLUMN rate_scope TEXT",
         ):
             try:
                 conn.execute(alter)
@@ -100,23 +104,35 @@ def insert_analysis(
     source: str = "web",
     sender: Optional[str] = None,
     caption: Optional[str] = None,
+    cells_count: Optional[int] = None,
+    cells_origin: Optional[str] = None,
+    rate_reliable: bool = True,
+    rate_scope: Optional[str] = None,
 ) -> int:
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    if germination_rate >= 80:
-        avaliacao = "excelente"
-    elif germination_rate >= 60:
-        avaliacao = "boa"
-    elif germination_rate >= 40:
-        avaliacao = "regular"
+    if not rate_reliable:
+        avaliacao = "taxa não confirmada"
+        summary = (
+            f"Análise em {ts}: imagem com {total_detected} detecções, "
+            f"{germinated} plantas germinadas e média {leaf_avg:.1f} folhas/planta. "
+            f"Taxa de germinação não confirmada porque a base de células não foi medida com segurança."
+        )
     else:
-        avaliacao = "baixa"
-
-    summary = (
-        f"Análise em {ts}: bandeja com {total_detected} mudas detectadas, "
-        f"{germinated} germinadas ({germination_rate:.1f}%), "
-        f"média {leaf_avg:.1f} folhas/planta. Avaliação: {avaliacao}."
-    )
+        if germination_rate >= 80:
+            avaliacao = "excelente"
+        elif germination_rate >= 60:
+            avaliacao = "boa"
+        elif germination_rate >= 40:
+            avaliacao = "regular"
+        else:
+            avaliacao = "baixa"
+        escopo = "área visível" if rate_scope == "visible_area" else "bandeja"
+        summary = (
+            f"Análise em {ts}: {escopo} com {total_detected} detecções, "
+            f"{germinated} germinadas ({germination_rate:.1f}%), "
+            f"média {leaf_avg:.1f} folhas/planta. Avaliação: {avaliacao}."
+        )
 
     analysis_embedding: Optional[bytes] = None
     try:
@@ -129,10 +145,12 @@ def insert_analysis(
         cur = conn.execute(
             """INSERT INTO analyses
                (timestamp, filename, total_detected, germinated, germination_rate,
-                leaf_avg, result_image, day_label, analysis_summary, analysis_embedding, source, sender, caption)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                leaf_avg, result_image, day_label, analysis_summary, analysis_embedding,
+                source, sender, caption, cells_count, cells_origin, rate_reliable, rate_scope)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (ts, filename, total_detected, germinated, germination_rate,
-             leaf_avg, result_image, day_label, summary, analysis_embedding, source, sender, caption),
+             leaf_avg, result_image, day_label, summary, analysis_embedding, source, sender, caption,
+             cells_count, cells_origin, 1 if rate_reliable else 0, rate_scope),
         )
         conn.commit()
         return cur.lastrowid
@@ -144,6 +162,9 @@ def get_history(db_path: str, limit: int = 20, offset: int = 0) -> list[dict]:
         rows = conn.execute(
             """SELECT id, timestamp, filename, total_detected, germinated, germination_rate,
                       leaf_avg, result_image, day_label, analysis_summary, caption,
+                      cells_count, cells_origin,
+                      COALESCE(rate_reliable, 1) AS rate_reliable,
+                      rate_scope,
                       CASE WHEN filename LIKE 'whatsapp_%' THEN 'whatsapp'
                            WHEN sender IS NOT NULL AND sender != '' THEN 'whatsapp'
                            WHEN source IS NOT NULL THEN source
@@ -181,6 +202,7 @@ def get_temporal_series(db_path: str) -> list[dict]:
                 AVG(leaf_avg)             AS avg_leaf_count,
                 COUNT(*)                  AS num_analyses
                FROM analyses
+               WHERE COALESCE(rate_reliable, 1) = 1
                GROUP BY substr(timestamp, 1, 10)
                ORDER BY day ASC"""
         ).fetchall()

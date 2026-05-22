@@ -115,7 +115,10 @@ async function runAnalysis() {
     renderResult(data);
     await loadHistory();
     await loadTemporal();
-    showToast(`${data.total_detected} detecção(ões), ${data.germination_rate}% germinação`, 'success');
+    const rateMsg = data.rate_reliable === false
+      ? `${data.germinated} planta(s) detectada(s); taxa sem base confirmada`
+      : `${data.total_detected} detecção(ões), ${data.germination_rate}% germinação`;
+    showToast(rateMsg, 'success');
   } catch(err) {
     setProgress(0,''); progressWrap.hidden = true;
     showToast(err.message, 'error', 5000);
@@ -130,12 +133,19 @@ async function runAnalysis() {
 function renderResult(data) {
   // Metrics side
   $('metricsSide').hidden = false;
-  $('mRate').textContent      = data.germination_rate + '%';
-  $('mRateBar').style.width   = data.germination_rate + '%';
+  const rateReliable = data.rate_reliable !== false;
+  $('mRate').textContent      = rateReliable ? data.germination_rate + '%' : '—';
+  $('mRateBar').style.width   = rateReliable ? data.germination_rate + '%' : '0%';
   const mRateSub = $('mRateSub');
   if (mRateSub) {
     const cap = data.cells_detected || data.tray_capacity || 200;
-    mRateSub.textContent = `${data.germinated} de ${cap} células`;
+    if (!rateReliable) {
+      mRateSub.textContent = `${data.germinated} plantas detectadas; total de células não confirmado`;
+    } else if (data.rate_scope === 'visible_area') {
+      mRateSub.textContent = `${data.germinated} em ${cap} células visíveis`;
+    } else {
+      mRateSub.textContent = `${data.germinated} de ${cap} células`;
+    }
   }
   $('mTotal').textContent     = data.total_detected;
   $('mGerminated').textContent= data.germinated;
@@ -146,8 +156,14 @@ function renderResult(data) {
   const cellsEl = $('mCells');
   if (cellsEl) {
     const cap = data.cells_detected || data.tray_capacity || 200;
-    const isAuto = data.cells_detected && data.cells_detected !== (data.tray_capacity || 200);
-    cellsEl.textContent = cap + (isAuto ? ' (auto)' : '');
+    if (!rateReliable) {
+      cellsEl.textContent = `${cap} (padrão, não confirmado)`;
+    } else if (data.rate_scope === 'visible_area') {
+      cellsEl.textContent = `${cap} (visíveis)`;
+    } else {
+      const isAuto = data.cells_detected && data.cells_detected !== (data.tray_capacity || 200);
+      cellsEl.textContent = cap + (isAuto ? ' (auto)' : '');
+    }
   }
 
   // Detection list
@@ -237,19 +253,25 @@ function renderHistory(records, total) {
     _updateLoadMoreBtn(0, 0);
     return;
   }
-  body.innerHTML = records.map(r => `
-    <tr>
-      <td style="font-family:var(--font-mono);color:var(--text-3)">${r.id}</td>
-      <td>${formatTs(r.timestamp)}</td>
-      <td style="max-width:140px;overflow:hidden;text-overflow:ellipsis" title="${r.filename}">${r.filename}</td>
-      <td>${r.total_detected}</td>
-      <td>${r.germinated}</td>
-      <td><span class="pill ${r.germination_rate>=50?'pill-green':'pill-red'}">${r.germination_rate}%</span></td>
-      <td>${r.leaf_avg}</td>
-      <td><span class="badge-source" title="${r.source==='whatsapp'?'Análise via WhatsApp':'Análise via dashboard'}">${r.source==='whatsapp' ? 'WhatsApp' + (r.sender ? ' ' + formatPhone(r.sender) : '') : 'Web'}</span></td>
-      <td>${r.result_image ? `<img src="${r.result_image}" class="result-thumb" alt="resultado" onclick="openLightbox('${r.result_image}')" />` : '-'}</td>
-      <td><button class="btn-del" title="Deletar" onclick="deleteRecord(${r.id})">Excluir</button></td>
-    </tr>`).join('');
+  body.innerHTML = records.map(r => {
+    const reliable = r.rate_reliable !== 0 && r.rate_reliable !== false;
+    const rateCell = reliable
+      ? `<span class="pill ${r.germination_rate>=50?'pill-green':'pill-red'}">${r.germination_rate}%</span>`
+      : '<span class="pill pill-muted" title="Taxa sem base de células confirmada">sem taxa</span>';
+    return `
+      <tr>
+        <td style="font-family:var(--font-mono);color:var(--text-3)">${r.id}</td>
+        <td>${formatTs(r.timestamp)}</td>
+        <td style="max-width:140px;overflow:hidden;text-overflow:ellipsis" title="${r.filename}">${r.filename}</td>
+        <td>${r.total_detected}</td>
+        <td>${r.germinated}</td>
+        <td>${rateCell}</td>
+        <td>${r.leaf_avg}</td>
+        <td><span class="badge-source" title="${r.source==='whatsapp'?'Análise via WhatsApp':'Análise via dashboard'}">${r.source==='whatsapp' ? 'WhatsApp' + (r.sender ? ' ' + formatPhone(r.sender) : '') : 'Web'}</span></td>
+        <td>${r.result_image ? `<img src="${r.result_image}" class="result-thumb" alt="resultado" onclick="openLightbox('${r.result_image}')" />` : '-'}</td>
+        <td><button class="btn-del" title="Deletar" onclick="deleteRecord(${r.id})">Excluir</button></td>
+      </tr>`;
+  }).join('');
   _updateLoadMoreBtn(_historyOffset, total);
 }
 
@@ -268,7 +290,10 @@ function _updateLoadMoreBtn(loaded, total) {
 function updateHeroStats(total, recentItems) {
   $('statTotal').textContent = total;
   if (!recentItems.length) { $('statGermRate').textContent = '—'; $('statLeafAvg').textContent = '—'; return; }
-  $('statGermRate').textContent = (recentItems.reduce((s,r) => s+r.germination_rate,0)/recentItems.length).toFixed(1) + '%';
+  const reliable = recentItems.filter(r => r.rate_reliable !== 0 && r.rate_reliable !== false);
+  $('statGermRate').textContent = reliable.length
+    ? (reliable.reduce((s,r) => s+r.germination_rate,0)/reliable.length).toFixed(1) + '%'
+    : '—';
   $('statLeafAvg').textContent  = (recentItems.reduce((s,r) => s+r.leaf_avg,0)/recentItems.length).toFixed(1);
 }
 
@@ -371,7 +396,7 @@ function renderChart(data) {
     data: {
       labels: data.map(d => d.day),
       datasets: [
-        { label: 'Taxa de Germinação (%)', data: data.map(d => +d.avg_germination_rate.toFixed(1)),
+        { label: 'Taxa de Germinação (%)', data: data.map(d => d.avg_germination_rate == null ? null : +d.avg_germination_rate.toFixed(1)),
           borderColor: '#2f6f4e', backgroundColor: 'rgba(47,111,78,0.10)', pointBackgroundColor: '#2f6f4e',
           pointRadius: 6, pointHoverRadius: 9, borderWidth: 2.5, tension: 0.3, fill: true, yAxisID: 'y' },
         { label: 'Folhas médias/muda', data: data.map(d => +d.avg_leaf_count.toFixed(1)),

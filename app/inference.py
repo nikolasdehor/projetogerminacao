@@ -273,7 +273,7 @@ def _resolve_cell_count(
     """Sanity check + fallback hierárquico para contagem de células.
 
     Retorna (células_usadas, origem) onde origem é uma das strings:
-    'caption', 'detected', 'fallback_default'.
+    'caption', 'detected_visible', 'fallback_default'.
     """
     global _cell_detection_stats
 
@@ -282,14 +282,15 @@ def _resolve_cell_count(
         _cell_detection_stats["success"] += 1
         return tray_capacity_override, "caption"
 
-    # 2. Valida detecção automática: descarta se anômala
-    # mínimo = max(12, plants*3): bandeja comercial menor tem 12 células,
-    # e células detectadas devem ser ao menos 3x as plantas (taxa máx ~33%)
+    # 2. Valida detecção automática de células visíveis no enquadramento.
+    # Em fotos parciais, a área fotografada pode ter taxa alta, então não
+    # exigimos plants*3. A única condição dura é ter pelo menos tantas células
+    # quanto plantas detectadas.
     if raw_detected is not None:
-        min_plausible = max(12, int(germinated_count * 3))
+        min_plausible = max(2, germinated_count)
         if min_plausible <= raw_detected <= 500:
             _cell_detection_stats["success"] += 1
-            return max(raw_detected, germinated_count), "detected"
+            return max(raw_detected, germinated_count), "detected_visible"
         print(
             f"  [cells] Detecção anômala descartada: {raw_detected} "
             f"(germinadas={germinated_count}, mín plausível={min_plausible})"
@@ -491,7 +492,8 @@ def run_inference(
         raw_detected, germinated_count, tray_capacity_override
     )
     cells_warning = (
-        "_💡 Dica: envie um número na legenda (ex: '128') para definir o total de células._"
+        "_💡 Não consegui contar as células visíveis com segurança. Para taxa confiável, "
+        "envie a bandeja inteira ou informe o total de células na legenda (ex: '128')._"
         if cells_origin == "fallback_default"
         else None
     )
@@ -499,6 +501,11 @@ def run_inference(
     germination_rate = round(germinated_count / detected_cells * 100, 1) if detected_cells > 0 else 0.0
     leaf_avg = round(sum(leaf_counts) / len(leaf_counts), 1) if leaf_counts else 0.0
     elapsed = round(time.time() - t0, 2)
+    rate_scope = {
+        "caption": "tray",
+        "detected_visible": "visible_area",
+        "fallback_default": "default_capacity",
+    }.get(cells_origin, "visible_area")
 
     return {
         "total_detected":   total,
@@ -507,6 +514,8 @@ def run_inference(
         "cells_detected":   detected_cells,
         "cells_origin":     cells_origin,
         "cells_warning":    cells_warning,
+        "rate_reliable":    cells_origin != "fallback_default",
+        "rate_scope":       rate_scope,
         "leaf_avg":         leaf_avg,
         "total_folhas_estimadas": int(round(leaf_avg * germinated_count)),
         "leaf_counts":      leaf_counts,

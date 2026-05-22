@@ -118,6 +118,10 @@ def analyze():
             day_label=effective_label,
             source="web",
             caption=caption_text,
+            cells_count=result.get("cells_detected"),
+            cells_origin=result.get("cells_origin"),
+            rate_reliable=bool(result.get("rate_reliable", True)),
+            rate_scope=result.get("rate_scope"),
         )
     except Exception as exc:
         return jsonify({"error": f"Erro ao gravar no banco: {exc}"}), 500
@@ -168,9 +172,10 @@ def stats():
             row = conn.execute("""
                 SELECT
                     COUNT(*)                              AS total,
-                    ROUND(AVG(germination_rate), 1)       AS avg_rate,
-                    ROUND(MAX(germination_rate), 1)       AS best_rate,
-                    ROUND(MIN(germination_rate), 1)       AS worst_rate,
+                    SUM(CASE WHEN COALESCE(rate_reliable, 1) = 1 THEN 1 ELSE 0 END) AS reliable_total,
+                    ROUND(AVG(CASE WHEN COALESCE(rate_reliable, 1) = 1 THEN germination_rate END), 1) AS avg_rate,
+                    ROUND(MAX(CASE WHEN COALESCE(rate_reliable, 1) = 1 THEN germination_rate END), 1) AS best_rate,
+                    ROUND(MIN(CASE WHEN COALESCE(rate_reliable, 1) = 1 THEN germination_rate END), 1) AS worst_rate,
                     ROUND(AVG(leaf_avg), 1)               AS avg_leaves,
                     SUM(total_detected)                   AS total_detected,
                     SUM(germinated)                       AS total_germinated,
@@ -187,7 +192,9 @@ def stats():
                         ELSE 'Baixa (<40%)'
                     END AS faixa,
                     COUNT(*) AS qtd
-                FROM analyses GROUP BY faixa ORDER BY MIN(germination_rate) DESC
+                FROM analyses
+                WHERE COALESCE(rate_reliable, 1) = 1
+                GROUP BY faixa ORDER BY MIN(germination_rate) DESC
             """).fetchall()
         return jsonify({
             "summary": dict(row) if row else {},

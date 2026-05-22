@@ -364,30 +364,60 @@ def _handle_image_message(client, sender: str, payload: dict, raw_caption: str |
             source="whatsapp",
             sender=sender,
             caption=caption,
+            cells_count=result.get("cells_detected"),
+            cells_origin=result.get("cells_origin"),
+            rate_reliable=bool(result.get("rate_reliable", True)),
+            rate_scope=result.get("rate_scope"),
         )
     except Exception:
         pass  # Não impede a resposta
-    if rate >= 75:
-        emoji = "🟢"
-        avaliacao = "Excelente germinação! Bandeja pronta para o próximo ciclo."
-    elif rate >= 55:
-        emoji = "🟡"
-        avaliacao = "Germinação moderada. Considere replantio nos espaços vazios ou verifique uniformidade."
-    else:
-        emoji = "🔴"
-        avaliacao = "Atenção! Taxa baixa. Avalie qualidade das sementes, substrato, umidade e temperatura."
-
     label_linha = f"🏷️ *Tratamento:* {caption}\n" if caption else ""
     cells_origin = result.get("cells_origin", "detected")
-    origem_label = {"caption": "informada", "detected": "detectada", "fallback_default": "estimada"}.get(cells_origin, "detectada")
+    rate_reliable = bool(result.get("rate_reliable", cells_origin != "fallback_default"))
+    origem_label = {
+        "caption": "total informado",
+        "detected": "células detectadas",
+        "detected_visible": "células visíveis",
+        "fallback_default": "base padrão não confirmada",
+    }.get(cells_origin, "células detectadas")
     cells_warning = result.get("cells_warning")
+
+    if not rate_reliable:
+        emoji = "⚪"
+        avaliacao = (
+            "Leitura parcial: detectei as plantas na imagem, mas não vou classificar a taxa da bandeja "
+            "sem confirmar o total de células."
+        )
+    elif rate >= 75:
+        emoji = "🟢"
+        avaliacao = "Boa germinação na área analisada. Continue acompanhando uniformidade e crescimento."
+    elif rate >= 55:
+        emoji = "🟡"
+        avaliacao = "Germinação moderada na área analisada. Vale observar espaços vazios e repetir a foto depois."
+    else:
+        emoji = "🔴"
+        avaliacao = (
+            "Taxa baixa na base informada. Confira sementes, substrato, umidade e temperatura, "
+            "mas confirme se a foto cobre a bandeja inteira."
+        )
+
+    if cells_origin == "caption":
+        plants_line = f"• Plantas germinadas: {germinated} de {capacity} células ({rate}%) [{origem_label}]\n"
+    elif cells_origin in ("detected", "detected_visible"):
+        plants_line = f"• Plantas germinadas: {germinated} em {capacity} células visíveis ({rate}%) [{origem_label}]\n"
+    else:
+        plants_line = (
+            f"• Plantas germinadas detectadas: {germinated}\n"
+            f"• Taxa da bandeja: não confirmada ({capacity} células padrão, foto pode ser parcial)\n"
+        )
+
     warning_linha = f"\n{cells_warning}" if cells_warning else ""
 
     texto = (
         f"🌱 *Análise da Bandeja — GerminaVision*\n"
         f"{label_linha}\n"
         f"📊 *Resultados:*\n"
-        f"• Plantas germinadas: {germinated} de {capacity} células ({rate}%) [{origem_label}]\n"
+        f"{plants_line}"
         f"• Folhas por planta (média): {result['leaf_avg']}\n"
         f"• Total de folhas estimadas: {int(round(result['leaf_avg'] * germinated))}\n"
         f"• Tempo de análise: {result['inference_time_s']}s\n\n"
@@ -406,7 +436,7 @@ def _handle_image_message(client, sender: str, payload: dict, raw_caption: str |
             "Germinacao": "🌱",
             "Folha": "🍃",
         }
-        class_display = {"Germinacao": "Germinação", "Folha": "Folha"}
+        class_display = {"Germinacao": "Germinação", "Folha": "Folhas YOLO"}
         for cls, count in sorted(classes_count.items(), key=lambda x: -x[1]):
             emoji_cls = class_emojis.get(cls, "•")
             label = class_display.get(cls, cls)
@@ -446,20 +476,25 @@ def _handle_status_command(client, sender: str):
             row = conn.execute("""
                 SELECT
                     COUNT(*) AS total,
-                    ROUND(AVG(germination_rate), 1) AS avg_rate,
-                    ROUND(MAX(germination_rate), 1) AS best_rate,
-                    ROUND(MIN(germination_rate), 1) AS worst_rate,
+                    SUM(CASE WHEN COALESCE(rate_reliable, 1) = 1 THEN 1 ELSE 0 END) AS reliable_total,
+                    ROUND(AVG(CASE WHEN COALESCE(rate_reliable, 1) = 1 THEN germination_rate END), 1) AS avg_rate,
+                    ROUND(MAX(CASE WHEN COALESCE(rate_reliable, 1) = 1 THEN germination_rate END), 1) AS best_rate,
+                    ROUND(MIN(CASE WHEN COALESCE(rate_reliable, 1) = 1 THEN germination_rate END), 1) AS worst_rate,
                     ROUND(AVG(leaf_avg), 1) AS avg_leaves
                 FROM analyses
             """).fetchone()
 
         if row and row["total"] > 0:
+            avg_rate = f"{row['avg_rate']}%" if row["avg_rate"] is not None else "—"
+            best_rate = f"{row['best_rate']}%" if row["best_rate"] is not None else "—"
+            worst_rate = f"{row['worst_rate']}%" if row["worst_rate"] is not None else "—"
             texto = (
                 f"📊 *Estatísticas — GerminaVision*\n\n"
                 f"• Total de análises: {row['total']}\n"
-                f"• Taxa média de germinação: {row['avg_rate']}%\n"
-                f"• Melhor taxa: {row['best_rate']}%\n"
-                f"• Pior taxa: {row['worst_rate']}%\n"
+                f"• Análises com taxa confiável: {row['reliable_total']}\n"
+                f"• Taxa média de germinação: {avg_rate}\n"
+                f"• Melhor taxa: {best_rate}\n"
+                f"• Pior taxa: {worst_rate}\n"
                 f"• Média de folhas: {row['avg_leaves']}\n\n"
                 f"📷 _Envie uma foto para nova análise!_"
             )
