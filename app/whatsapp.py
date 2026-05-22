@@ -4,10 +4,13 @@ from __future__ import annotations
 import io
 import json
 import os
+import ssl
 import urllib.request
 import urllib.error
 from pathlib import Path
 from typing import Optional
+
+import certifi
 
 
 class EvolutionClient:
@@ -22,14 +25,24 @@ class EvolutionClient:
         self.base_url = (base_url or os.getenv("EVOLUTION_API_URL", "")).rstrip("/")
         self.api_key = api_key or os.getenv("EVOLUTION_API_KEY", "")
         self.instance_name = instance_name or os.getenv("EVOLUTION_INSTANCE_NAME", "germinavision")
+        self.host_header = os.getenv("EVOLUTION_API_HOST_HEADER", "").strip()
+        ssl_verify = os.getenv("EVOLUTION_SSL_VERIFY", "true").strip().lower()
+        if ssl_verify in {"0", "false", "no", "off"}:
+            self._ssl_context = ssl._create_unverified_context()
+        else:
+            cert_file = os.getenv("SSL_CERT_FILE") or certifi.where()
+            self._ssl_context = ssl.create_default_context(cafile=cert_file)
 
     # ── Helpers ────────────────────────────────────────────────────────────────
 
     def _headers(self) -> dict:
-        return {
+        headers = {
             "Content-Type": "application/json",
             "apikey": self.api_key,
         }
+        if self.host_header:
+            headers["Host"] = self.host_header
+        return headers
 
     def _request(self, method: str, path: str, body: Optional[dict] = None) -> dict:
         """Faz request para a Evolution API e retorna JSON."""
@@ -38,7 +51,7 @@ class EvolutionClient:
         req = urllib.request.Request(url, data=data, headers=self._headers(), method=method)
 
         try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with urllib.request.urlopen(req, timeout=30, context=self._ssl_context) as resp:
                 raw = resp.read().decode("utf-8")
                 return json.loads(raw) if raw else {}
         except urllib.error.HTTPError as e:
@@ -189,8 +202,11 @@ class EvolutionClient:
             media_url = image_msg.get("url") or image_msg.get("directPath")
             if media_url:
                 try:
-                    req = urllib.request.Request(media_url, headers={"apikey": self.api_key})
-                    with urllib.request.urlopen(req, timeout=30) as resp:
+                    headers = {"apikey": self.api_key}
+                    if self.host_header:
+                        headers["Host"] = self.host_header
+                    req = urllib.request.Request(media_url, headers=headers)
+                    with urllib.request.urlopen(req, timeout=30, context=self._ssl_context) as resp:
                         raw = resp.read()
                 except Exception:
                     raw = None
