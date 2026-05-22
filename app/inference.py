@@ -899,10 +899,13 @@ def _count_visible_cells_with_method(
     contour_count = _count_visible_cells_by_contours(img_bgr)
     prefer_grid = image_quality.get("issue") in {"led_purple", "led_magenta"}
 
-    if not prefer_grid and contour_count is not None:
-        return contour_count, "contours"
-
     grid_count = _count_visible_cells_by_grid(img_bgr)
+
+    if not prefer_grid and contour_count is not None:
+        if grid_count is not None and abs(grid_count - contour_count) <= max(2, contour_count * 0.20):
+            print(f"  [cells] Contornos={contour_count}; usando grade={grid_count}")
+            return grid_count, "grid"
+        return contour_count, "contours"
 
     if prefer_grid and grid_count is not None:
         if contour_count is not None and abs(grid_count - contour_count) >= max(4, contour_count * 0.35):
@@ -1162,7 +1165,8 @@ def run_inference(
     clamped_boxes = _dedupe_germination_boxes(clamped_boxes)
     clamped_boxes = _leaf_based_germination_fallback(img_bgr, clamped_boxes, w, h)
     clamped_boxes = _green_component_germination_fallback(img_bgr, clamped_boxes)
-    clamped_boxes = _tiny_green_germination_fallback(img_bgr, clamped_boxes)
+    if image_quality.get("issue") in {"led_purple", "led_magenta"}:
+        clamped_boxes = _tiny_green_germination_fallback(img_bgr, clamped_boxes)
     clamped_boxes = _filter_germination_by_green_signal(img_bgr, clamped_boxes)
     clamped_boxes = _split_tall_germination_boxes(img_bgr, clamped_boxes)
     clamped_boxes = _dedupe_germination_boxes(clamped_boxes)

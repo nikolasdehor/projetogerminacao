@@ -9,6 +9,7 @@ from app.inference import (
     _count_visible_cells_by_contours,
     _count_visible_cells_by_grid,
     _count_visible_cells_with_method,
+    _assess_image_quality,
     _leaf_based_germination_fallback,
     _resolve_cell_count,
     _tiny_green_germination_fallback,
@@ -43,6 +44,14 @@ class CellCountRegressionTest(unittest.TestCase):
         self.assertEqual(_count_visible_cells_by_grid(image), 12)
         self.assertEqual(_count_visible_cells(image), 12)
         self.assertEqual(_count_visible_cells(image, {"issue": None}), 12)
+
+    def test_good_lighting_side_crop_prefers_grid_when_contours_pick_extra_regions(self):
+        image = load_image("tests/fixtures/images/good-light-side-crop-12-cells.jpeg")
+
+        self.assertIsNone(_assess_image_quality(image)["issue"])
+        self.assertEqual(_count_visible_cells_by_contours(image), 13)
+        self.assertEqual(_count_visible_cells_by_grid(image), 12)
+        self.assertEqual(_count_visible_cells_with_method(image), (12, "grid"))
 
     def test_side_cropped_purple_tray_does_not_count_border_slivers(self):
         image = load_image("tests/fixtures/images/side-crop-purple-12-cells.jpeg")
