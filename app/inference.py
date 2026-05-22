@@ -657,6 +657,25 @@ def _resolve_cell_count(
     return max(TRAY_CAPACITY, germinated_count), "fallback_default"
 
 
+def _cells_warning_message(
+    raw_detected: Optional[int],
+    germinated_count: int,
+    cells_origin: str,
+) -> str | None:
+    if cells_origin != "fallback_default":
+        return None
+    if raw_detected is not None and raw_detected <= germinated_count:
+        return (
+            "_💡 A foto parece ser um recorte pequeno ou com células cortadas. "
+            "Localizei as plantas visíveis, mas não usei essa grade incompleta para calcular taxa. "
+            "Para taxa confiável, envie a bandeja inteira ou informe o total de células na legenda (ex: '128')._"
+        )
+    return (
+        "_💡 Não consegui confirmar as células visíveis com segurança. Para taxa confiável, "
+        "envie a bandeja inteira ou informe o total de células na legenda (ex: '128')._"
+    )
+
+
 def run_inference(
     image_path: str,
     model,
@@ -862,12 +881,7 @@ def run_inference(
     detected_cells, cells_origin = _resolve_cell_count(
         raw_detected, germinated_count, tray_capacity_override
     )
-    cells_warning = (
-        "_💡 Não consegui contar as células visíveis com segurança. Para taxa confiável, "
-        "envie a bandeja inteira ou informe o total de células na legenda (ex: '128')._"
-        if cells_origin == "fallback_default"
-        else None
-    )
+    cells_warning = _cells_warning_message(raw_detected, germinated_count, cells_origin)
 
     germination_rate = round(germinated_count / detected_cells * 100, 1) if detected_cells > 0 else 0.0
     leaf_avg = round(sum(leaf_counts) / len(leaf_counts), 1) if leaf_counts else 0.0

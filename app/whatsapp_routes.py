@@ -393,8 +393,8 @@ def _handle_image_message(client, sender: str, payload: dict, raw_caption: str |
             )
         else:
             avaliacao = (
-                "Leitura parcial: detectei as plantas na imagem, mas não vou classificar a taxa da bandeja "
-                "sem confirmar o total de células."
+                "Leitura parcial: localizei as plantas visíveis, mas o recorte não dá uma base segura "
+                "de células para calcular taxa."
             )
     elif cells_origin in ("detected", "detected_visible"):
         if rate >= 75:
@@ -466,8 +466,12 @@ def _handle_image_message(client, sender: str, payload: dict, raw_caption: str |
             "Germinacao": "🌱",
             "Folha": "🍃",
         }
-        class_display = {"Germinacao": "Plantas localizadas", "Folha": "Folhas detectadas"}
-        for cls, count in sorted(classes_count.items(), key=lambda x: -x[1]):
+        class_display = {
+            "Germinacao": "Plantas localizadas",
+            "Folha": "Sinais de folha detectados",
+        }
+        class_order = {"Germinacao": 0, "Folha": 1}
+        for cls, count in sorted(classes_count.items(), key=lambda x: (class_order.get(x[0], 99), x[0])):
             emoji_cls = class_emojis.get(cls, "•")
             label = class_display.get(cls, cls)
             texto += f"  {emoji_cls} {label}: {count}\n"
