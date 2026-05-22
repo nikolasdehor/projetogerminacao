@@ -325,7 +325,7 @@ def _handle_image_message(client, sender: str, payload: dict, raw_caption: str |
 
     # Notifica que estamos processando (com indicador "digitando..." para feedback visual)
     client.send_presence(sender, "composing", delay_ms=3000)
-    client.send_text(sender, "🔬 *Analisando sua imagem...*\nAguarde um momento!")
+    client.send_text(sender, "🌱 *Analisando a bandeja...*\nEstou procurando plantas, folhas e células visíveis.")
 
     # Baixa a imagem
     image_path = client.download_media(payload, upload_dir)
@@ -388,12 +388,22 @@ def _handle_image_message(client, sender: str, payload: dict, raw_caption: str |
             "Leitura parcial: detectei as plantas na imagem, mas não vou classificar a taxa da bandeja "
             "sem confirmar o total de células."
         )
+    elif cells_origin in ("detected", "detected_visible"):
+        if rate >= 75:
+            emoji = "🟢"
+            avaliacao = "Boa germinação no recorte visível. Use como leitura da área fotografada."
+        elif rate >= 55:
+            emoji = "🟡"
+            avaliacao = "Germinação moderada no recorte visível. Confira a imagem anotada e, se possível, envie a bandeja inteira."
+        else:
+            emoji = "🟡"
+            avaliacao = "Recorte com espaços vazios visíveis. Não vou tratar isso como diagnóstico da bandeja inteira."
     elif rate >= 75:
         emoji = "🟢"
-        avaliacao = "Boa germinação na área analisada. Continue acompanhando uniformidade e crescimento."
+        avaliacao = "Boa germinação na base informada. Continue acompanhando uniformidade e crescimento."
     elif rate >= 55:
         emoji = "🟡"
-        avaliacao = "Germinação moderada na área analisada. Vale observar espaços vazios e repetir a foto depois."
+        avaliacao = "Germinação moderada na base informada. Vale observar espaços vazios e repetir a foto depois."
     else:
         emoji = "🔴"
         avaliacao = (
@@ -404,14 +414,19 @@ def _handle_image_message(client, sender: str, payload: dict, raw_caption: str |
     if cells_origin == "caption":
         plants_line = f"• Plantas germinadas: {germinated} de {capacity} células ({rate}%) [{origem_label}]\n"
     elif cells_origin in ("detected", "detected_visible"):
-        plants_line = f"• Plantas germinadas: {germinated} em {capacity} células visíveis ({rate}%) [{origem_label}]\n"
+        plants_line = f"• No recorte: {germinated} plantas em {capacity} células visíveis ({rate}%)\n"
     else:
         plants_line = (
             f"• Plantas germinadas detectadas: {germinated}\n"
             f"• Taxa da bandeja: não confirmada (células visíveis não contadas com segurança)\n"
         )
 
-    warning_linha = f"\n{cells_warning}" if cells_warning else ""
+    if cells_warning:
+        warning_linha = f"\n{cells_warning}"
+    elif cells_origin in ("detected", "detected_visible"):
+        warning_linha = "\n_ℹ️ Taxa calculada só sobre o recorte visível, não sobre a bandeja inteira._"
+    else:
+        warning_linha = ""
 
     texto = (
         f"🌱 *Análise da Bandeja — GerminaVision*\n"
@@ -431,12 +446,12 @@ def _handle_image_message(client, sender: str, payload: dict, raw_caption: str |
         classes_count[cls] = classes_count.get(cls, 0) + 1
 
     if classes_count:
-        texto += "📋 *Detalhamento:*\n"
+        texto += "🔎 *Leitura técnica:*\n"
         class_emojis = {
             "Germinacao": "🌱",
             "Folha": "🍃",
         }
-        class_display = {"Germinacao": "Germinação", "Folha": "Folhas detectadas"}
+        class_display = {"Germinacao": "Plantas localizadas", "Folha": "Folhas detectadas"}
         for cls, count in sorted(classes_count.items(), key=lambda x: -x[1]):
             emoji_cls = class_emojis.get(cls, "•")
             label = class_display.get(cls, cls)

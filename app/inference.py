@@ -253,6 +253,46 @@ def _leaf_based_germination_fallback(
     return boxes + additions
 
 
+def _green_component_germination_fallback(
+    img_bgr: np.ndarray,
+    boxes: list[tuple[str, float, tuple[int, int, int, int]]],
+) -> list[tuple[str, float, tuple[int, int, int, int]]]:
+    """Promove agrupamentos verdes grandes que o YOLO viu como planta/folha parcial."""
+    h, w = img_bgr.shape[:2]
+    hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, (25, 35, 45), (95, 255, 255))
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    germ_boxes = [bbox for cls_name, _, bbox in boxes if cls_name in GERMINATION_CLASSES]
+    additions: list[tuple[str, float, tuple[int, int, int, int]]] = []
+    min_area = max(4500, int(w * h * 0.003))
+
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        if area < min_area:
+            continue
+        x, y, bw, bh = cv2.boundingRect(contour)
+        if bw < 55 or bh < 85:
+            continue
+        fill_ratio = area / max(bw * bh, 1)
+        if fill_ratio < 0.12:
+            continue
+
+        bbox = _expand_bbox((x, y, x + bw, y + bh), w, h, ratio=0.10)
+        if any(_is_duplicate_germination(bbox, germ_bbox) for germ_bbox in germ_boxes):
+            continue
+        if any(_is_duplicate_germination(bbox, item[2]) for item in additions):
+            continue
+        additions.append(("Germinacao", 0.5, bbox))
+
+    if additions:
+        print(f"  [germ] {len(additions)} germinação provável adicionada por máscara verde")
+    return boxes + additions
+
+
 def _count_visible_cells(img_bgr: np.ndarray) -> Optional[int]:
     """Conta células visíveis da bandeja com adaptive threshold (lida com iluminação variada)."""
     gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
@@ -498,6 +538,7 @@ def run_inference(
 
     clamped_boxes = _dedupe_germination_boxes(clamped_boxes)
     clamped_boxes = _leaf_based_germination_fallback(clamped_boxes, w, h)
+    clamped_boxes = _green_component_germination_fallback(img_bgr, clamped_boxes)
     clamped_boxes = _dedupe_germination_boxes(clamped_boxes)
     germ_boxes: list[tuple[int, int, int, int, float]] = [
         (bbox[0], bbox[1], bbox[2], bbox[3], conf)
@@ -526,6 +567,8 @@ def run_inference(
     detections: list[dict] = []
     scale = max(0.4, min(w, h) / 1200)
     thickness = max(1, int(scale * 2))
+    label_scale = max(0.38, min(w, h) / 1800)
+    label_thickness = max(1, int(label_scale * 2))
     plant_id = 0
 
     for cls_name, conf, bbox in raw_boxes_for_loop:
@@ -542,8 +585,7 @@ def run_inference(
             # contorno pode subestimar (threshold colapsou peaks sobrepostos)
             leaf_n = max(leaf_yolo, leaf_contour)
             leaf_counts.append(leaf_n)
-            folhas_lbl = f"{leaf_n} folha" if leaf_n == 1 else f"{leaf_n} folhas"
-            label = f"#{plant_id} Germ {conf:.0%} | {folhas_lbl}"
+            label = f"#{plant_id}"
             germinated = True
             pid: Optional[int] = plant_id
         elif cls_name == LEAF_CLASS:
@@ -564,11 +606,11 @@ def run_inference(
             pid = None
 
         cv2.rectangle(img_annotated, (x1, y1), (x2, y2), color_bgr, thickness)
-        (lw, lh), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, scale, thickness)
+        (lw, lh), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, label_scale, label_thickness)
         ly = max(y1 - 6, lh + 4)
         cv2.rectangle(img_annotated, (x1, ly - lh - 4), (x1 + lw + 4, ly + baseline), color_bgr, -1)
         cv2.putText(img_annotated, label, (x1 + 2, ly - 2),
-                    cv2.FONT_HERSHEY_SIMPLEX, scale, (255, 255, 255), thickness, cv2.LINE_AA)
+                    cv2.FONT_HERSHEY_SIMPLEX, label_scale, (255, 255, 255), label_thickness, cv2.LINE_AA)
 
         detections.append({
             "class":      cls_name,
