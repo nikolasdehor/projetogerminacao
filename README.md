@@ -1,712 +1,344 @@
-# GerminaVision
-
 ![GerminaVision Banner](./static/banner.svg)
 
-> Sistema de visão computacional para monitoramento de germinação e crescimento de mudas em bandejas. Detecta plantas e folhas via YOLO11, com dashboard web interativo e integração WhatsApp em tempo real.
+# GerminaVision
 
-## Sumário
+Assistente agrícola com visão computacional para analisar bandejas de mudas por foto, via dashboard web ou WhatsApp.
 
-- [Visão geral](#visão-geral)
-- [Arquitetura](#arquitetura)
-- [Pré-requisitos](#pré-requisitos)
-- [Setup passo a passo](#setup-passo-a-passo)
-- [Como usar](#como-usar)
-- [Endpoints da API](#endpoints-da-api)
-- [Treino de modelo próprio](#treino-de-modelo-próprio)
-- [Troubleshooting](#troubleshooting)
-- [Estrutura do projeto](#estrutura-do-projeto)
-- [Créditos](#créditos)
+O GerminaVision recebe uma imagem da bandeja, localiza mudas, estima folhas, identifica células visíveis quando a foto permite e devolve um relatório com leitura técnica, imagem anotada e avisos de confiabilidade. A ideia central é simples: transformar uma foto comum, tirada em campo, em uma leitura rápida, útil e honesta sobre germinação.
 
----
+![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![Flask](https://img.shields.io/badge/Flask-API%20%2B%20Dashboard-000000?style=for-the-badge&logo=flask&logoColor=white)
+![YOLO](https://img.shields.io/badge/YOLO11-Visao%20Computacional-16A34A?style=for-the-badge)
+![OpenCV](https://img.shields.io/badge/OpenCV-Processamento%20de%20Imagem-5C3EE8?style=for-the-badge&logo=opencv&logoColor=white)
+![WhatsApp](https://img.shields.io/badge/WhatsApp-Evolution%20API-25D366?style=for-the-badge&logo=whatsapp&logoColor=white)
 
-## Visão geral
+## Visão Geral
 
-GerminaVision é uma plataforma completa de monitoramento de mudas em bandejas usando visão computacional. O sistema detecta automaticamente plantas germinadas e folhas individuais em imagens capturadas de bandejas de cultivo, fornecendo métricas em tempo real como taxa de germinação, contagem de folhas por planta e estágio fenológico.
+O projeto nasceu para reduzir o trabalho manual de avaliação de mudas em bandejas. Em vez de contar visualmente célula por célula, o usuário envia uma foto e recebe uma leitura estruturada:
 
-O modelo foi treinado em um dataset misto combinando imagens públicas (Roboflow: brócolis e couve-flor) com fotos proprietárias de morango, cobrindo casos de uso reais em produção comercial e pesquisa. Detecta duas classes principais:
+- quantidade de plantas localizadas;
+- estimativa de folhas por planta;
+- total de folhas estimadas;
+- taxa de germinação quando a base de células é confiável;
+- avisos sobre recorte parcial, grade incompleta, luz roxa/magenta ou leitura insegura;
+- imagem anotada com caixas e identificadores;
+- histórico de análises no dashboard;
+- atendimento e análise automática pelo WhatsApp.
 
-- **Germinação**: muda germinada com caule e folhas visíveis
-- **Folha**: folha individual, usada para calcular desenvolvimento relativo
+O ponto mais importante do projeto não é apenas detectar plantas. É também saber quando não deve prometer uma taxa que a imagem não sustenta.
 
-A plataforma oferece três interfaces:
+## Demonstração
 
-1. **Dashboard web**: upload de foto, análise visual, histórico de monitoramento e chatbot de dicas
-2. **WhatsApp**: enviar fotos diretamente pelo celular, receber análises automáticas
-3. **API REST**: integração com sistemas de gestão agrícola ou aplicações customizadas
+O fluxo no WhatsApp foi pensado para uso direto por alunos, professores e produtores:
 
----
+1. O usuário envia uma foto da bandeja.
+2. O bot responde que está analisando.
+3. O sistema processa imagem, iluminação, plantas, folhas e grade.
+4. O usuário recebe a imagem anotada e um resumo em linguagem natural.
 
-## Arquitetura
+Exemplo de saída:
 
-```
-┌─────────────────┐
-│  Usuário Mobile │ (WhatsApp)
-└────────┬────────┘
-         │ Foto
-         ▼
-┌──────────────────────────────┐
-│  Evolution API (VPS)         │ (Hostinger)
-│  - Recebe + enfileira msgs   │
-└────────┬─────────────────────┘
-         │ Webhook (cloudflared)
-         ▼
-┌──────────────────────────────┐
-│  Flask Local (5001)          │
-│  ┌────────────────────────┐  │
-│  │ YOLO11 Inference       │  │
-│  │ (detecção + contagem)  │  │
-│  └────────────────────────┘  │
-│  ┌────────────────────────┐  │
-│  │ Chatbot IA             │  │
-│  │ (OpenRouter)           │  │
-│  └────────────────────────┘  │
-│  ┌────────────────────────┐  │
-│  │ SQLite Database        │  │
-│  │ (histórico análises)   │  │
-│  └────────────────────────┘  │
-└──────────────────────────────┘
-         │ Resposta
-         ▼
-┌──────────────────────────────┐
-│  Dashboard Web (localhost)   │
-│  + Histórico de análises     │
-└──────────────────────────────┘
+```text
+Análise da Bandeja - GerminaVision
+
+Resultados:
+- No recorte: 10 plantas em 24 células visíveis (41.7%)
+- Folhas por planta (média): 2.9
+- Total de folhas estimadas: 29
+
+Leitura do recorte visível: a taxa indica quantas células apresentaram muda
+na área fotografada, não na bandeja inteira.
 ```
 
-### Componentes principais
+## Como A Taxa É Calculada
 
-| Arquivo | Responsabilidade |
-|---------|------------------|
-| `run.py` | Entry point Flask, inicia servidor na porta 5001 |
-| `app/__init__.py` | Factory pattern, registra blueprints e carrega modelo |
-| `app/routes.py` | Endpoints HTTP: dashboard, análise de imagens, histórico |
-| `app/whatsapp_routes.py` | Webhook Evolution API, processa mensagens WhatsApp |
-| `app/whatsapp.py` | Cliente Evolution API, cria instância e envia mensagens |
-| `app/inference.py` | Pipeline YOLO11, detecção e contagem de folhas por planta |
-| `app/chatbot.py` | Chatbot IA (OpenRouter), dicas personalizadas por contexto |
-| `app/database.py` | SQLite, persiste análises e série temporal |
-| `prepare_dataset.py` | Fatiamento LabelMe + tiles YOLO, conversão de anotações |
-| `mix_datasets.py` | Mescla dataset Roboflow (público) + morango (próprio) |
-| `train.py` | Treino YOLO11 local (Metal/MPS no Mac ou CUDA/CPU) |
+A taxa de germinação pode ter três bases diferentes, dependendo da foto e do contexto informado:
 
----
+| Situação | Base usada | Exemplo |
+| --- | --- | --- |
+| O usuário informa o total de células na legenda | Bandeja informada pelo usuário | `128` na legenda |
+| A foto mostra um recorte com grade legível | Células visíveis no recorte | `10 plantas em 24 células visíveis` |
+| A foto está cortada, sem grade segura ou com luz crítica | Taxa não confirmada | `leitura parcial` |
 
-## Pré-requisitos
+Essa decisão evita uma armadilha comum: calcular porcentagem apenas em cima das plantas detectadas. Se a taxa fosse baseada somente nas plantas, quase toda imagem pareceria 100%. Por isso o GerminaVision sempre tenta separar:
 
-### Sistema operacional
+- **plantas detectadas**, que dizem quantas mudas foram localizadas;
+- **células analisáveis**, que dizem qual foi a área de referência;
+- **confiabilidade da taxa**, que diz se a porcentagem pode ser usada.
 
-- macOS 12+ ou Linux (x86_64 ou ARM64)
-- Windows 10+ via WSL2 (sem suporte a Metal; use CPU ou CUDA)
+## Pipeline
 
-### Ferramentas
-
-- **Python 3.11+** (testado em 3.14 no macOS)
-- **Homebrew** (macOS): para instalar `cloudflared`
-- **Git**: para clonar o repositório
-- Approx. **10 GB de espaço em disco** (modelos + datasets + runs de treino)
-
-### Contas online (gratuitas)
-
-- **OpenRouter**: chatbot IA (modelos: Llama 3.3, GLM-4, Qwen)
-  - Inscrever-se: https://openrouter.ai
-  - API key: criar em https://openrouter.ai/keys
-
-- **Evolution API**: gerenciar WhatsApp
-  - Serviço gratuito em VPS própria (ex: Hostinger) ou provedor tercerizado
-  - Alternativa pronta: chatwoot, n8n, ou similar
-
-- **Roboflow** (opcional): apenas para re-baixar dataset público
-  - Inscrever-se: https://roboflow.com
-  - Dataset público: `eshu-broccoli/seedling-f9rmf`
-
----
-
-## Setup passo a passo
-
-### 1. Clone e dependências
-
-```bash
-# Clone o repositório
-git clone https://github.com/nikolasdehor/projetogerminacao.git
-cd projetogerminacao
-
-# Crie virtualenv
-python3 -m venv venv
-source venv/bin/activate  # macOS/Linux
-# ou no Windows:
-# venv\Scripts\activate
-
-# Instale dependências Python
-pip install -r requirements.txt
-
-# No macOS, instale cloudflared para tunnel público
-brew install cloudflared
+```mermaid
+flowchart LR
+    A["Foto da bandeja"] --> B["Correção de iluminação"]
+    B --> C["Reconstrução anti-magenta"]
+    C --> D["YOLO11 + SAHI opcional"]
+    D --> E["Pós-processamento e deduplicação"]
+    E --> F["Contagem de plantas, folhas e células"]
+    F --> G["Relatório + imagem anotada"]
+    G --> H["Dashboard web / WhatsApp"]
 ```
 
-### 2. Configure variáveis de ambiente
-
-Copie `.env.example` para `.env`:
-
-```bash
-cp .env.example .env
-```
-
-Abra `.env` e preencha os valores reais:
-
-```bash
-# OpenRouter - onde obter: https://openrouter.ai/keys
-OPENROUTER_API_KEY=sk-or-v1-abc123...
-
-# Evolution API - URL e chave da sua instância
-EVOLUTION_API_URL=https://your-evolution-instance.example.com
-EVOLUTION_API_KEY=<SUA_API_KEY>
-
-# Nome livre para a instância WhatsApp dentro da Evolution
-EVOLUTION_INSTANCE_NAME=germinavision
-
-# (Opcional) Capacidade da bandeja - padrão 200 para bandejas de morango
-# TRAY_CAPACITY=200
-```
-
-**Onde obter cada uma:**
-
-- **OPENROUTER_API_KEY**: Log em https://openrouter.ai, vá para "API Keys", copie a chave
-- **EVOLUTION_API_URL e KEY**: Se usando Hostinger ou VPS, acesse o painel Evolution API, copie URL e global API key
-- **EVOLUTION_INSTANCE_NAME**: escolha um nome único (exemplo: `germinavision`, `bandeja-01`)
-
-### 3. Dataset
-
-#### Opção A: Usar dataset pré-treinado pronto
-
-Se você tem um `best.pt` já treinado ou quer usar o modelo YOLO11 pré-treinado (COCO):
-
-```bash
-# Apenas crie a pasta de modelos
-mkdir -p models
-
-# Se tem best.pt, copie para:
-# cp seu_modelo_antigo/best.pt models/best.pt
-
-# Senão, o sistema carregará yolo11s.pt automaticamente na primeira inferência
-```
-
-#### Opção B: Preparar dataset do zero e retreinar
-
-O projeto inclui dois datasets:
-
-1. **Roboflow público** (`eshu-broccoli/seedling-f9rmf`): ~768 imagens de brócolis e couve-flor
-2. **Morango próprio**: ~512 tiles extraídos de fotos LabelMe de 4000 x 1848 px (fatiadas em grade 4 x 2)
-
-**Passo 1: Baixe dataset Roboflow**
-
-```bash
-# Instale Roboflow CLI
-pip install roboflow
-
-# Baixe o dataset (requer Roboflow account)
-python -c "
-from roboflow import Roboflow
-rf = Roboflow(api_key='SUA_CHAVE_ROBOFLOW')
-project = rf.workspace('eshu-broccoli').project('seedling-f9rmf')
-dataset = project.download('yolov8')
-"
-```
-
-**Passo 2: Prepare dataset de morango (LabelMe para YOLO)**
-
-Se você tem imagens anotadas em LabelMe (PNGs + JSONs) em `_source_pngs/`:
-
-```bash
-# Converte polígonos LabelMe -> bboxes YOLO, fatia em tiles 4x2
-python prepare_dataset.py
-```
-
-Isso cria a estrutura esperada em `dataset/`:
-```
-dataset/
-├── train/
-│   ├── images/
-│   └── labels/
-├── valid/
-│   ├── images/
-│   └── labels/
-├── test/
-│   ├── images/
-│   └── labels/
-└── data.yaml
-```
-
-**Passo 3: Mescle Roboflow + morango**
-
-```bash
-# Combina os dois datasets (6 classes Roboflow -> 2 classes YOLO, 2 do morango)
-python mix_datasets.py
-```
-
-Resultado final:
-- Classes: `[Germinacao, Folha]`
-- Proporção aprox: 70% treino, 20% validação, 10% teste
-- Total: ~1.280 imagens
-
-### 4. Treino
-
-**Opção A: Local no Mac (recomendado se tem Apple Silicon)**
-
-```bash
-source venv/bin/activate
-python train.py
-```
-
-Parâmetros padrão:
-- Epochs: 100 (com early stopping no epoch 51)
-- Batch size: 4 (reduzido para evitar OOM em Mac)
-- Device: Metal (MPS) se disponível
-- Tempo estimado: ~3 horas
-
-Modelo treinado salvo automaticamente em `models/best.pt`.
-
-**Opção B: Google Colab (GPU gratuita)**
-
-Abra e execute o notebook:
-```
-colab_monitoramento_germinacao.ipynb
-```
-
-1. Faça upload de `dataset/` para Drive
-2. Execute células do treino
-3. Download de `best.pt` ao final
-4. Copie para `models/best.pt` no seu ambiente local
-
-**Opção C: Usar modelo pré-treinado YOLO11 (sem treino)**
-
-Se não treinar, o sistema usa `yolo11s.pt` (COCO) automaticamente. Resultado: detecção genérica (menos precisa para mudas em bandejas).
-
-### 5. Inicie o servidor Flask
-
-```bash
-source venv/bin/activate
-python run.py
-```
-
-Saída esperada:
-```
-🌱  Sistema de Monitoramento de Germinação
-   Acesse: http://localhost:5001
-```
-
-Verifique se funciona:
-```bash
-curl http://localhost:5001
-# Deve retornar a página HTML do dashboard
-```
-
-### 6. Crie tunnel público (cloudflared)
-
-Em outro terminal (com `venv` ativo):
-
-```bash
-cloudflared tunnel --url http://localhost:5001
-```
-
-Aparecerá uma URL como:
-```
-https://XXXXX.trycloudflare.com
-```
-
-**Essa URL é pública e acessível do WhatsApp/internet.** Copie-a - você vai usar no próximo passo.
-
-**Para tunnel permanente** (URL fixa):
-
-Consulte https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/
-
-### 7. Conecte WhatsApp (Evolution API)
-
-Abra um novo terminal e execute:
-
-```bash
-# Substitua XXXXX.trycloudflare.com pela URL real
-WEBHOOK_URL="https://XXXXX.trycloudflare.com/whatsapp"
-
-# Crie instância
-curl -X POST "http://localhost:5001/api/whatsapp/connect" \
-  -H "Content-Type: application/json"
-```
-
-O sistema retorna um QR code. **Escaneie com seu celular** (WhatsApp Web):
-
-```bash
-# Verifique se está conectado
-curl http://localhost:5001/api/whatsapp/status
-# Resposta esperada: {"state": "open"}
-```
-
-Registre webhook na Evolution (automático via `/api/whatsapp/connect`, mas pode configurar manualmente):
-
-```bash
-INSTANCE_NAME="germinavision"  # seu nome de instância
-
-curl -X POST "$EVOLUTION_API_URL/webhook/set/$INSTANCE_NAME" \
-  -H "Content-Type: application/json" \
-  -H "apikey: $EVOLUTION_API_KEY" \
-  -d "{\"webhook\": \"$WEBHOOK_URL/webhook\"}"
-```
-
----
-
-## Configuração WhatsApp
-
-As credenciais da Evolution API são lidas exclusivamente de variáveis de ambiente, nunca do frontend. Configure em `.env`:
-
-| Variável | Descrição |
-|----------|-----------|
-| `PUBLIC_BASE_URL` | URL pública onde o app está acessível (ex: cloudflared tunnel) |
-| `EVOLUTION_API_URL` | URL da instância Evolution API |
-| `EVOLUTION_API_KEY` | Chave de autenticação da Evolution |
-| `EVOLUTION_INSTANCE_NAME` | Nome da instância WhatsApp (padrão: `germinavision`) |
-
-Use `.env.example` como base.
-
-Para conectar o WhatsApp:
-
-1. Acesse `/whatsapp` na interface
-2. Clique em "Conectar WhatsApp"
-3. Escaneie o QR Code com seu celular
-
----
-
-## Como usar
-
-### Dashboard web
-
-1. Abra http://localhost:5001 no navegador
-2. **Envie uma foto**: clique em "Upload" ou arraste uma imagem de bandeja (PNG, JPG, WEBP)
-3. **Veja análise**: o sistema detecta plantas/folhas e mostra:
-   - Bounding boxes coloridas (verde = germinação, amarelo = folha)
-   - Taxa de germinação (%)
-   - Contagem média de folhas por planta
-   - Tempo de inferência
-4. **Histórico**: abaixo aparece todas as análises anteriores com timestamps
-5. **Chatbot**: faça perguntas sobre germinação, condições de cultivo, etc.
+## Recursos
+
+### Visão Computacional
+
+- Modelo YOLO treinado para classes de germinação e folhas.
+- Suporte a análise com imagem inteira e fatiamento opcional com SAHI.
+- Deduplicação de detecções próximas.
+- Fallback por componentes verdes quando a muda é pequena demais para o modelo.
+- Filtros para reduzir falsos positivos em bordas, sujeira e divisórias da bandeja.
+- Estimativa de folhas por planta usando sinais detectados e heurísticas visuais.
+
+### Iluminação Difícil
+
+Fotos reais raramente são perfeitas. O projeto trata casos comuns encontrados em viveiros e salas de cultivo:
+
+- correção por Gray World;
+- CLAHE para recuperar contraste local;
+- normalização para luz roxa;
+- reconstrução específica para LED magenta;
+- geração de imagem mais natural para visualização;
+- aviso explícito quando a iluminação prejudica a confiança.
+
+### Grade E Células
+
+- Detecção de linhas claras da bandeja.
+- Contagem de células por grade quando há base visual suficiente.
+- Rejeição de recortes pequenos ou células cortadas demais.
+- Separação entre taxa da bandeja inteira e taxa do recorte visível.
+- Aceite de capacidade informada pelo usuário na legenda da imagem.
 
 ### WhatsApp
 
-1. **Abra WhatsApp** no seu celular
-2. **Encontre o contato** (número de telefone registrado na Evolution)
-3. **Envie uma foto** da bandeja
-4. **Espere análise**: em segundos, recebe:
-   - Imagem anotada com detecções
-   - Taxa de germinação
-   - Dica personalizada do chatbot IA
-5. **Comandos de texto**:
-   - `status` - mostra último resultado
-   - `histórico` - últimas 5 análises
-   - `dica` - dica aleatória sobre germinação
-   - `ajuda` - lista de comandos
-   - Qualquer outro texto - chatbot responde
+- Integração com Evolution API.
+- QR Code e status de conexão pelo painel.
+- Webhook para receber mensagens.
+- Fila de processamento para evitar travamento em múltiplas imagens.
+- Respostas automáticas para texto e imagem.
+- Comandos úteis como `status`, `estatísticas`, `histórico`, `dica` e `ajuda`.
 
-### API REST (para integração)
+### Dashboard
 
-Veja [Endpoints da API](#endpoints-da-api).
+- Upload manual de imagens.
+- Resultado visual com imagem anotada.
+- Histórico de análises.
+- Estatísticas agregadas.
+- Chat agrícola com suporte de LLM.
+- Página de configuração do WhatsApp.
 
----
+## Arquitetura
 
-## Endpoints da API
+| Camada | Responsabilidade | Arquivos principais |
+| --- | --- | --- |
+| API Flask | Rotas web, upload, histórico e status | `app/routes.py`, `run.py` |
+| Inferência | Detecção, filtros, grade, folhas e taxa | `app/inference.py` |
+| WhatsApp | Webhook, fila, comandos e envio de mídia | `app/whatsapp_routes.py`, `app/evolution_api.py` |
+| Persistência | Registro local das análises | `app/database.py`, `data/` |
+| Interface | Dashboard, histórico, MCP e WhatsApp | `templates/`, `static/` |
+| Modelo | Pesos YOLO treinados | `models/best.pt` |
+| Testes | Regressões de grade, luz e fallback | `tests/` |
 
-### Status e Diagnóstico
+## Stack
 
-```
-GET /api/status
-Retorna: {
-  "status": "ok",
-  "model_loaded": true,
-  "custom_model": true,
-  "model_path": "/path/to/models/best.pt",
-  "message": "Modelo personalizado ativo ✅"
-}
-```
+- **Python** para backend, inferência e automações.
+- **Flask** para API e dashboard.
+- **Ultralytics YOLO11** para detecção de mudas e folhas.
+- **OpenCV** para tratamento de imagem, grade e iluminação.
+- **Pillow / NumPy** para manipulação de imagens.
+- **Evolution API** para WhatsApp.
+- **OpenRouter** para o assistente textual agrícola.
+- **MCP** como ponto opcional de integração com agentes.
 
-```
-GET /api/whatsapp/status
-Retorna: { "state": "open" } ou { "state": "closed" }
-```
+## Requisitos
 
-### Análise de Imagens
+- Python 3.10 ou superior.
+- Modelo treinado em `models/best.pt`.
+- Chave OpenRouter para o chat agrícola, se quiser usar o recurso de conversa.
+- Evolution API ativa, se quiser usar o WhatsApp.
 
-```
-POST /api/analyze
-Content-Type: multipart/form-data
+> O repositório ignora `.env`, pesos `.pt`, uploads e resultados gerados para evitar vazamento de dados locais.
 
-Parâmetros:
-  image: <arquivo .png/.jpg/.webp>
-  day_label: (opcional) descrição do dia (ex: "Dia 5 - pós-semeadura")
+## Instalação
 
-Retorna: {
-  "total_detected": 45,
-  "germinated": 28,
-  "germination_rate": 14.0,
-  "leaves_total": 68,
-  "leaf_avg": 2.4,
-  "leaf_counts": [2, 3, 2, 1, ...],
-  "tray_capacity": 200,
-  "detections": [
-    {
-      "class": "Germinacao",
-      "confidence": 0.95,
-      "bbox": [100, 200, 150, 250],
-      "germinated": true,
-      "leaf_count": 3
-    },
-    ...
-  ],
-  "result_image": "/static/results/result_abc123.jpg",
-  "inference_time_s": 1.23
-}
-```
-
-### Histórico
-
-```
-GET /api/history?limit=10
-Retorna: [
-  {
-    "id": 1,
-    "timestamp": "2026-05-13T20:30:15",
-    "day_label": "Dia 5",
-    "germination_rate": 14.0,
-    "leaf_avg": 2.4,
-    "result_image": "/static/results/result_abc123.jpg"
-  },
-  ...
-]
-```
-
-```
-GET /api/temporal
-Retorna série temporal (taxa de germinação por dia)
-```
-
-### Chatbot
-
-```
-POST /api/chat
-Content-Type: application/json
-
-Body: {
-  "message": "Como aumentar a taxa de germinação?",
-  "context": {
-    "germination_rate": 60.0,
-    "leaf_avg": 2.5,
-    "last_analysis": "2026-05-13T20:30:15"
-  }
-}
-
-Retorna: {
-  "response": "A taxa de germinação depende principalmente...",
-  "model_used": "openrouter/auto"
-}
-```
-
-### WhatsApp (evolução)
-
-```
-POST /api/whatsapp/connect
-Cria/recria instância e gera QR code
-```
-
-```
-POST /whatsapp (webhook)
-Evolution API chama este endpoint com mensagens recebidas
-```
-
----
-
-## Treino de modelo próprio
-
-Se quiser melhorar a detecção com suas próprias fotos:
-
-### 1. Colete imagens
-
-Tire fotos de bandejas reais em diferentes:
-- Ângulos (frontal, lateral, de cima)
-- Iluminações (natural, LED, mista)
-- Culturas (morango, alface, tomate, etc.)
-- Estágios (pré-emergência até 4-5 folhas)
-
-Mínimo recomendado: **100 imagens por classe**
-
-### 2. Anote com LabelMe
-
-Instale LabelMe:
 ```bash
-pip install labelme
-labelme
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+python run.py
 ```
 
-Para cada imagem:
-1. Abra em LabelMe
-2. Desenhe polígonos ao redor de:
-   - Plantas germinadas - label `Germinacao`
-   - Folhas individuais - label `Folha`
-3. Salve como JSON (automático)
+Depois acesse:
 
-Estrutura de saída:
-```
-_source_pngs/
-└── 2026-05-13/
-    ├── imagem_01.png
-    ├── imagem_01.json
-    ├── imagem_02.png
-    ├── imagem_02.json
-    └── ...
+```text
+http://localhost:5001
 ```
 
-### 3. Prepare dataset
+## Configuração
+
+As variáveis ficam em `.env`:
+
+| Variável | Obrigatória | Descrição |
+| --- | --- | --- |
+| `OPENROUTER_API_KEY` | Não | Chave usada pelo chat agrícola. |
+| `PUBLIC_BASE_URL` | Sim para WhatsApp | URL pública usada no webhook e envio de mídia. |
+| `EVOLUTION_API_URL` | Sim para WhatsApp | URL da Evolution API. |
+| `EVOLUTION_API_KEY` | Sim para WhatsApp | Chave da Evolution API. |
+| `EVOLUTION_INSTANCE_NAME` | Sim para WhatsApp | Nome da instância WhatsApp. |
+| `EVOLUTION_API_HOST_HEADER` | Não | Host header customizado quando necessário. |
+| `EVOLUTION_SSL_VERIFY` | Não | Controla verificação SSL em ambientes específicos. |
+| `TRAY_CAPACITY` | Não | Capacidade padrão da bandeja quando aplicável. |
+
+Exemplo mínimo:
+
+```env
+PUBLIC_BASE_URL=https://seu-tunnel-ou-dominio.com
+EVOLUTION_API_URL=https://sua-evolution-api.com
+EVOLUTION_API_KEY=sua-chave
+EVOLUTION_INSTANCE_NAME=germinavision
+```
+
+## WhatsApp
+
+1. Configure as variáveis da Evolution API.
+2. Suba a aplicação com `python run.py`.
+3. Acesse `/whatsapp`.
+4. Conecte a instância pelo QR Code.
+5. Envie uma foto da bandeja no WhatsApp.
+
+Comandos reconhecidos:
+
+```text
+status
+estatísticas
+histórico
+dica
+ajuda
+```
+
+O bot também entende mensagens comuns e responde com apoio do assistente agrícola quando a pergunta não é uma imagem.
+
+## API
+
+| Método | Rota | Descrição |
+| --- | --- | --- |
+| `GET` | `/api/status` | Status da aplicação e do modelo. |
+| `POST` | `/api/analyze` | Analisa uma imagem enviada por multipart form. |
+| `GET` | `/api/history` | Lista histórico de análises. |
+| `DELETE` | `/api/history/<id>` | Remove uma análise do histórico. |
+| `GET` | `/api/temporal` | Retorna evolução temporal. |
+| `GET` | `/api/stats` | Retorna estatísticas agregadas. |
+| `POST` | `/api/chat` | Envia pergunta ao assistente agrícola. |
+| `GET` | `/api/whatsapp/status` | Consulta status da integração WhatsApp. |
+| `POST` | `/api/whatsapp/connect` | Conecta a instância WhatsApp. |
+| `POST` | `/api/whatsapp/disconnect` | Desconecta a instância WhatsApp. |
+| `GET` | `/api/whatsapp/qr` | Busca QR Code da instância. |
+| `POST` | `/api/whatsapp/webhook` | Recebe eventos da Evolution API. |
+
+Exemplo de análise via `curl`:
+
+```bash
+curl -X POST http://localhost:5001/api/analyze \
+  -F "image=@/caminho/para/bandeja.jpg" \
+  -F "caption=128"
+```
+
+## Treinamento
+
+O projeto inclui scripts auxiliares para preparar e misturar datasets:
+
+| Script | Uso |
+| --- | --- |
+| `prepare_dataset.py` | Organiza imagens e labels para treinamento. |
+| `mix_datasets.py` | Combina bases diferentes em um dataset único. |
+| `train.py` | Executa treinamento do modelo YOLO. |
+
+Fluxo típico:
 
 ```bash
 python prepare_dataset.py
-```
-
-Isso:
-- Converte polígonos -> bboxes normalizadas YOLO
-- Fatia em tiles 4 x 2 (para aumentar samples)
-- Faz split automático train/valid/test
-- Gera `data.yaml`
-
-### 4. Retreine
-
-```bash
+python mix_datasets.py
 python train.py
 ```
 
-Monitore:
-```bash
-# Em outro terminal
-tensorboard --logdir runs/detect/train
+O peso final esperado pela aplicação é:
+
+```text
+models/best.pt
 ```
 
-Métricas importantes:
-- **mAP50**: % de detecções corretas (threshold 50% IOU)
-- **mAP50-95**: média em thresholds 50%-95% (mais rigoroso)
-- **Precision/Recall**: trade-off entre falsos positivos e negativos
+Se esse arquivo não existir, a aplicação pode cair para um modelo base, mas a precisão para mudas não será a mesma de um modelo treinado para o domínio.
 
-Objetivo: **mAP50 > 0.85** para produção.
+## Testes
 
-### 5. Implante
+Execute a suíte de regressão:
 
 ```bash
-cp runs/detect/train/weights/best.pt models/best.pt
-python run.py  # Recarrega novo modelo automaticamente
+python -m unittest discover -s tests
 ```
 
----
+Há testes cobrindo pontos sensíveis do projeto, incluindo:
 
-## Troubleshooting
+- contagem de células em recortes;
+- grade sob luz roxa;
+- reconstrução de imagem magenta;
+- leitura de mudas pequenas;
+- descarte de folhas falsas em bordas;
+- decisão de confiabilidade da taxa.
 
-| Problema | Causa | Solução |
-|----------|-------|---------|
-| **Flask 502 Bad Gateway** | Cloudflared caiu ou desconectou | Reinicie `cloudflared tunnel --url http://localhost:5001` em novo terminal |
-| **WhatsApp state=closed** | QR code expirou (~60s) | Execute `curl http://localhost:5001/api/whatsapp/connect` e escaneie novo QR |
-| **mAP baixo no treino** | Dataset desbalanceado ou pequeno | Adicione mais imagens (mín. 100/classe), aumente epochs, reduza `imgsz` |
-| **OOM no treino (killed)** | Memória insuficiente | Reduza `batch=2`, `imgsz=416` no `train.py`, ou use Colab |
-| **Chatbot responde "429"** | Rate limit OpenRouter (free tier) | Espere 20s entre requisições ou upgrade para conta paga |
-| **"*asterisco*" literal na resposta** | Resposta com Markdown não renderizada no WhatsApp | Chatbot já evita Markdown, mas se persistir, reabra conversação (`/reset`) |
-| **CloudFlare URL muda a cada restart** | Usando quick tunnel (efêmero) | Para URL fixa: configure tunnel nomeado em https://dash.cloudflare.com |
-| **Modelo não carrega** | `best.pt` corrompido ou caminho errado | Verifique `models/best.pt` existe e tem >100 MB; senão, retreine |
-| **Imagem não analisa** | Formato não suportado ou arquivo corrompido | Use PNG, JPG ou WEBP; verifique se a imagem abre normalmente |
-| **Nenhuma detecção na imagem** | Modelo não foi treinado para aquele contexto | Adicione mais amostras daquele cenário e retreine |
+## Estrutura
 
----
-
-## Estrutura do projeto
-
-```
-projetogerminacao/
-├── README.md                           # Este arquivo
-├── run.py                              # Entry point Flask
-├── requirements.txt                    # Dependências Python
-├── .env.example                        # Template de variáveis
-│
+```text
+.
 ├── app/
-│   ├── __init__.py                     # Factory pattern Flask
-│   ├── routes.py                       # Endpoints HTTP (dashboard, análise)
-│   ├── whatsapp_routes.py              # Webhook Evolution + comandos WhatsApp
-│   ├── whatsapp.py                     # Cliente Evolution API
-│   ├── inference.py                    # YOLO11 + pipeline de detecção
-│   ├── chatbot.py                      # Chatbot IA (OpenRouter)
-│   └── database.py                     # SQLite (histórico análises)
-│
-├── templates/
-│   ├── index.html                      # Dashboard web (upload + análise)
-│   ├── mcp.html                        # Documentação MCP (opcional)
-│   └── ...
-│
-├── static/
-│   ├── js/app.js                       # Frontend interativo
-│   ├── css/style.css                   # Estilo dashboard
-│   ├── banner.svg                      # Banner projeto
-│   ├── uploads/                        # Imagens enviadas (temporário)
-│   ├── results/                        # Imagens anotadas
-│   └── ...
-│
-├── models/
-│   └── best.pt                         # Modelo YOLO11 treinado (não commitado)
-│
-├── dataset/
-│   ├── train/, valid/, test/           # Dataset YOLO (estrutura automática)
-│   └── data.yaml                       # Configuração classes + paths
-│
-├── _source_pngs/                       # Input LabelMe (use prepare_dataset.py)
-│   └── 2026-05-13/
-│       ├── imagem_01.png
-│       ├── imagem_01.json
-│       └── ...
-│
-├── data/
-│   └── germination.db                  # SQLite histórico (gerado automaticamente)
-│
-├── prepare_dataset.py                  # LabelMe -> YOLO converter + tiler
-├── mix_datasets.py                     # Mescla Roboflow + morango
-├── train.py                            # Treino YOLO11
-├── colab_monitoramento_germinacao.ipynb # Treino alternativo (Google Colab)
-│
-└── .gitignore                          # Exclui modelos, datasets, envs
+│   ├── inference.py          # Pipeline de visão computacional
+│   ├── routes.py             # API e dashboard
+│   ├── whatsapp_routes.py    # Webhook e comandos WhatsApp
+│   ├── evolution_api.py      # Cliente Evolution API
+│   └── database.py           # Histórico local
+├── data/                     # Banco local gerado em runtime
+├── models/                   # Pesos YOLO ignorados pelo Git
+├── static/                   # Assets, uploads e resultados
+├── templates/                # Telas web
+├── tests/                    # Regressões
+├── run.py                    # Entrada da aplicação Flask
+└── requirements.txt
 ```
 
-### Arquivos importantes explicados
+## Limitações
 
-- **`run.py`**: Inicia servidor Flask na porta 5001. Execute com `python run.py`.
-- **`app/__init__.py`**: Factory que cria app, registra blueprints e carrega modelo YOLO.
-- **`app/routes.py`**: Endpoints HTTP: GET `/` (dashboard), POST `/api/analyze` (análise), etc.
-- **`app/whatsapp_routes.py`**: Recebe mensagens do webhook Evolution, processa e responde.
-- **`app/inference.py`**: Core - roda YOLO, anota imagem, conta folhas por planta.
-- **`app/chatbot.py`**: Chatbot especializado em germinação com fallback de 8 modelos OpenRouter.
-- **`app/database.py`**: Persiste análises em SQLite com timestamps e série temporal.
-- **`prepare_dataset.py`**: Converte anotações LabelMe (polígonos) para bboxes YOLO normalizadas, fatia em tiles 4 x 2.
-- **`mix_datasets.py`**: Mescla dataset Roboflow (6 classes) + dataset morango (2 classes nativos) em split train/valid/test.
-- **`train.py`**: Executa treino YOLO11 com early stopping, detecta Metal (MPS) no Mac.
-- **`colab_monitoramento_germinacao.ipynb`**: Notebook Colab para treino em GPU gratuita.
+- A análise não substitui avaliação agronômica profissional.
+- A taxa da bandeja inteira só é confiável quando a capacidade é informada ou quando a imagem mostra a grade necessária.
+- Fotos cortadas podem gerar apenas leitura do recorte visível.
+- LED magenta pode ser suavizado, mas não recupera informação visual que foi totalmente perdida na captura.
+- Mudas muito pequenas ainda podem depender de fallback visual e validação humana.
 
----
+## Boas Práticas De Foto
+
+Para melhorar a precisão:
+
+- fotografe a bandeja de cima;
+- evite inclinação extrema;
+- inclua a maior parte da grade;
+- use luz branca ou natural quando possível;
+- evite excesso de LED roxo/magenta;
+- informe a capacidade da bandeja na legenda quando quiser taxa da bandeja inteira.
+
+Exemplo de legenda:
+
+```text
+128
+```
 
 ## Créditos
 
-- **Dataset Roboflow**: [eshu-broccoli/seedling-f9rmf](https://universe.roboflow.com/eshu-broccoli/seedling-f9rmf) - Licença CC BY 4.0 (brócolis, couve-flor)
-- **YOLO11**: [Ultralytics](https://github.com/ultralytics/ultralytics) - Licença AGPL-3.0
-- **Evolution API**: Plataforma de integração WhatsApp
-- **Cloudflare Tunnel**: Proxy reverso para exposição de localhost
-- **OpenRouter**: Agregador de modelos IA (Llama 3.3, GLM-4, Qwen, etc.)
-- **Flask**: Framework web minimalista
-- **OpenCV + Pillow**: Processamento de imagem
-- **PyTorch + TorchVision**: Deep learning
+Projeto desenvolvido como aplicação prática de visão computacional, automação e inteligência artificial para análise de mudas.
 
----
+Agradecimento especial ao professor **Vilson Soares de Siqueira** pela orientação, pelos desafios propostos e pela oportunidade de transformar uma necessidade real em uma solução funcional.
 
 ## Autor
 
-**Nikolas de Hor**  
-Goiânia, GO  
-nikolasdehor79@gmail.com
+**Nikolas DeHor**
 
----
-
-**Última atualização**: 13 de maio de 2026
+Projeto experimental e educacional voltado para agricultura, automação e IA aplicada.
