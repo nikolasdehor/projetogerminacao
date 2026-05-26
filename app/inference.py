@@ -2162,9 +2162,10 @@ def run_inference(
     if issue is None:
         clamped_boxes = _leaf_based_germination_fallback(img_bgr, clamped_boxes, w, h)
 
-    # green_component pega aglomerados verdes grandes em LED; em luz normal
-    # duplica o trabalho do YOLO.
-    if issue in {"led_purple", "led_magenta"}:
+    # green_component: aglomerados verdes grandes em LED. Desligado por padrao
+    # desde o modelo de 2026-05-26 porque gera bboxes-blob enormes englobando
+    # varias plantas. Reativar com GERMINAVISION_GREEN_COMPONENT_FALLBACK=1.
+    if issue in {"led_purple", "led_magenta"} and os.environ.get("GERMINAVISION_GREEN_COMPONENT_FALLBACK") == "1":
         clamped_boxes = _green_component_germination_fallback(img_bgr, clamped_boxes, image_quality)
 
     # tiny_green em luz normal gera falsos positivos em residuos verdes;
@@ -2172,8 +2173,10 @@ def run_inference(
     if issue in {"led_purple", "led_magenta"}:
         clamped_boxes = _tiny_green_germination_fallback(img_bgr, clamped_boxes, image_quality)
 
-    # Hybrid intra-cell so em magenta, onde YOLO tende a falhar completamente.
-    if issue == "led_magenta":
+    # Hybrid intra-cell so em magenta. Desligado por padrao desde o modelo de
+    # 2026-05-26 porque a heuristica cluster-por-cell empilhava bboxes em
+    # plantas adultas sobrepostas. Reativar com GERMINAVISION_HYBRID_FALLBACK=1.
+    if issue == "led_magenta" and os.environ.get("GERMINAVISION_HYBRID_FALLBACK") == "1":
         clamped_boxes = _hybrid_grid_cluster_fallback(img_bgr, clamped_boxes, image_quality)
 
     # cluster_based fica apenas no LED roxo, onde o sinal vegetal e medio.
