@@ -1,10 +1,10 @@
 """
 Treino local do detector de mudas — roda no Mac com Metal (MPS).
 Uso: python train.py
-O modelo treinado será salvo em models/best.pt automaticamente.
+O modelo treinado sera salvo em runs/train/train_<timestamp>/weights/best.pt.
 """
 from pathlib import Path
-import shutil
+from datetime import datetime
 import yaml
 import torch
 
@@ -15,6 +15,7 @@ DATA_YAML  = DATASET / "data.yaml"
 FIXED_YAML = BASE / "data_train.yaml"
 MODEL_DIR  = BASE / "models"
 MODEL_DIR.mkdir(exist_ok=True)
+RUN_NAME   = f"train_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
 # ── Device ────────────────────────────────────────────────────────────────────
 if torch.backends.mps.is_available():
@@ -61,14 +62,14 @@ print("Iniciando treino morango_v3 a partir de yolo11s.pt (base limpa)…")
 
 results = model.train(
     data=str(FIXED_YAML),
-    epochs=60,
-    imgsz=640,
-    batch=4,
-    patience=12,
+    epochs=100,
+    imgsz=1280,
+    batch=8,
+    patience=20,
     device=DEVICE,
     workers=0,
-    project=str(BASE / "runs"),
-    name="morango_v3",
+    project=str(BASE / "runs" / "train"),
+    name=RUN_NAME,
     exist_ok=False,
     cache=False,
     resume=False,
@@ -90,14 +91,13 @@ results = model.train(
     copy_paste=0.0,
 )
 
-# ── Copia best.pt para models/ ────────────────────────────────────────────────
+# ── Resultado ─────────────────────────────────────────────────────────────────
 best_src = Path(results.save_dir) / "weights" / "best.pt"
-best_dst = MODEL_DIR / "best.pt"
 
 if best_src.exists():
-    shutil.copy(best_src, best_dst)
-    print(f"\n✅  Modelo salvo em: {best_dst}")
-    print("   Reinicie a app (python run.py) para usar o modelo treinado.")
+    print(f"\n✅  Modelo treinado salvo em: {best_src}")
+    print("   models/best.pt NAO foi substituido automaticamente.")
+    print("   Valide o modelo novo antes de instalar.")
 else:
     print(f"\n⚠️  Não encontrou best.pt em {best_src}")
     print(f"   Procure manualmente em: {BASE / 'runs'}")

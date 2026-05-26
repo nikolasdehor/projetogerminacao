@@ -3,7 +3,8 @@ __pycache__/
 *.pyc
 *.pyo
 .DS_Store
-data/germination.db
+data/
+*.db
 models/best.pt
 *.pt
 .env*
