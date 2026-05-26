@@ -89,6 +89,44 @@ def _reconstruct_magenta_for_yolo(img_bgr: np.ndarray) -> np.ndarray:
     return pseudo_green
 
 
+def _amplify_green_on_plants(img_bgr: np.ndarray) -> np.ndarray:
+    """Amplifica G apenas nos pixels com assinatura residual de planta.
+
+    Estrategia sugerida pelo Nikolas (2026-05-26): em LED magenta extremo,
+    _reconstruct_magenta_for_yolo inflava verde na imagem inteira (inclusive
+    substrato), gerando visual sintetico e confundindo o YOLO. Esta versao
+    usa _magenta_plant_mask (validada empiricamente: planta G>=28, substrato
+    G<=26) para localizar onde HA planta e amplifica o canal G la, deixando
+    fundo intacto.
+
+    A imagem retornada eh usada SO para inferencia. A imagem anotada
+    continua sendo a original via img_bgr.copy() no caller.
+    """
+    plant_mask = _magenta_plant_mask(img_bgr)
+    if cv2.countNonZero(plant_mask) == 0:
+        return img_bgr.copy()
+
+    # Dilata levemente para capturar bordas de folha que cairam fora do
+    # threshold rigido (planta G=28 nas costas vs 35 no centro).
+    plant_mask = cv2.dilate(
+        plant_mask,
+        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)),
+        iterations=1,
+    )
+
+    b, g, r = cv2.split(img_bgr)
+    g_out = g.astype(np.float32)
+    mask = plant_mask > 0
+    # Amplifica G nos pixels da planta: 3.5x mas com piso de 90 (forca o
+    # modelo a ver folha mesmo quando o residuo era de 25).
+    g_out[mask] = np.maximum(g_out[mask] * 3.5, 90.0)
+    g_out = np.clip(g_out, 0, 255).astype(np.uint8)
+
+    pct = float(np.count_nonzero(mask)) / mask.size * 100
+    print(f"  [amplify] verde sintetico em {pct:.1f}% da imagem (so na planta)")
+    return cv2.merge([b, g_out, r])
+
+
 def _naturalize_magenta_for_display(
     img_bgr: np.ndarray,
     _enhanced_bgr: np.ndarray,
@@ -277,7 +315,12 @@ def _enhance_for_yolo(img_bgr: np.ndarray, quality: dict) -> np.ndarray:
         return _normalize_lighting(img_bgr)
 
     if quality.get("issue") == "led_magenta" and os.environ.get("GERMINAVISION_RAW_MAGENTA") != "1":
-        return _reconstruct_magenta_for_yolo(img_bgr)
+        # Default: amplifica G so na mascara de planta (preserva fundo magenta).
+        # GERMINAVISION_LEGACY_RECONSTRUCT=1 volta para a reconstrucao global
+        # antiga (verde sintetico na imagem inteira, mais agressiva mas suja fundo).
+        if os.environ.get("GERMINAVISION_LEGACY_RECONSTRUCT") == "1":
+            return _reconstruct_magenta_for_yolo(img_bgr)
+        return _amplify_green_on_plants(img_bgr)
 
     return img_bgr
 
