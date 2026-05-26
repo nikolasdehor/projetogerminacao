@@ -1143,7 +1143,58 @@ def _detect_grid_via_edges(
     if len(vert_centers) < 6 or len(horiz_centers) < 8:
         return None
 
+    # Regulariza pelo stride mediano: força grade fisica uniforme,
+    # preenche gaps de Hough e evita linhas locais off-center.
+    vert_centers = _regularize_grid_lines(vert_centers, w)
+    horiz_centers = _regularize_grid_lines(horiz_centers, h)
+
+    if len(vert_centers) < 3 or len(horiz_centers) < 3:
+        return None
+
     return vert_centers, horiz_centers
+
+
+def _regularize_grid_lines(positions: list[int], axis_length: int) -> list[int]:
+    """Gera grade regular usando stride mediano global."""
+    if len(positions) < 3:
+        return positions
+
+    sorted_pos = sorted(positions)
+    diffs = np.diff(sorted_pos)
+    if len(diffs) == 0:
+        return positions
+    stride = float(np.median(diffs))
+    if stride < 10:
+        return positions
+
+    # Ancora pragmaticamente na mediana das linhas detectadas.
+    anchor = float(np.median(sorted_pos))
+
+    regularized: list[float] = [anchor]
+    p = anchor - stride
+    while p > -stride * 0.4:
+        regularized.insert(0, p)
+        p -= stride
+    p = anchor + stride
+    while p < axis_length + stride * 0.4:
+        regularized.append(p)
+        p += stride
+
+    valid = [int(round(x)) for x in regularized if -2 <= x <= axis_length + 2]
+    valid = [max(0, min(axis_length, x)) for x in valid]
+    valid = sorted(set(valid))
+    if len(valid) < 3:
+        return positions
+
+    snap_tol = stride * 0.3
+    snapped: list[int] = []
+    for regular in valid:
+        candidates = [detected for detected in sorted_pos if abs(detected - regular) < snap_tol]
+        if candidates:
+            snapped.append(min(candidates, key=lambda detected: abs(detected - regular)))
+        else:
+            snapped.append(regular)
+    return sorted(set(snapped))
 
 
 def _grid_cell_boxes_from_edges(
@@ -1526,7 +1577,11 @@ def _hybrid_grid_cluster_fallback(
     if quality.get("issue") == "led_magenta" or not cells:
         magenta_cells = _grid_cell_boxes_magenta(img_bgr)
     if magenta_cells and (
-        not cells or (quality.get("issue") == "led_magenta" and len(cells) < 8)
+        not cells
+        or (
+            quality.get("issue") == "led_magenta"
+            and (len(cells) < 8 or len(cells) > len(magenta_cells) * 1.25)
+        )
     ):
         cells = magenta_cells
     if not cells:
@@ -1930,6 +1985,51 @@ def _cells_warning_message(
     )
 
 
+def _nms_germination_boxes(
+    boxes: list[tuple[str, float, tuple[int, int, int, int]]],
+    iou_threshold: float = 0.50,
+) -> list[tuple[str, float, tuple[int, int, int, int]]]:
+    """Non-Max Suppression em germinacoes.
+
+    Mantem o box de MAIOR area quando 2+ se sobrepoem com IoU > threshold.
+    Preserva todos os boxes que nao sao Germinacao.
+    """
+    germ_items = [item for item in boxes if item[0] in GERMINATION_CLASSES]
+    other_items = [item for item in boxes if item[0] not in GERMINATION_CLASSES]
+
+    if len(germ_items) < 2:
+        return boxes
+
+    def iou(b1: tuple[int, int, int, int], b2: tuple[int, int, int, int]) -> float:
+        x1 = max(b1[0], b2[0])
+        y1 = max(b1[1], b2[1])
+        x2 = min(b1[2], b2[2])
+        y2 = min(b1[3], b2[3])
+        if x2 <= x1 or y2 <= y1:
+            return 0.0
+        inter = (x2 - x1) * (y2 - y1)
+        area1 = max(1, (b1[2] - b1[0]) * (b1[3] - b1[1]))
+        area2 = max(1, (b2[2] - b2[0]) * (b2[3] - b2[1]))
+        union = area1 + area2 - inter
+        return inter / max(union, 1)
+
+    germ_sorted = sorted(
+        germ_items,
+        key=lambda item: -((item[2][2] - item[2][0]) * (item[2][3] - item[2][1])),
+    )
+    kept: list[tuple[str, float, tuple[int, int, int, int]]] = []
+    suppressed = 0
+    for item in germ_sorted:
+        if any(iou(item[2], kept_item[2]) > iou_threshold for kept_item in kept):
+            suppressed += 1
+            continue
+        kept.append(item)
+
+    if suppressed:
+        print(f"  [germ] NMS removeu {suppressed} box(es) sobreposto(s) (IoU>{iou_threshold})")
+    return other_items + kept
+
+
 def run_inference(
     image_path: str,
     model,
@@ -2032,26 +2132,36 @@ def run_inference(
 
     clamped_boxes = _dedupe_germination_boxes(clamped_boxes)
     signal_img_bgr = img_for_inference if magenta_mode else img_bgr
-    # leaf_based depende de YOLO confiável de Folha, so fora de magenta
-    if not magenta_mode:
+    issue = image_quality.get("issue")
+
+    # leaf_based depende de YOLO confiavel de Folha, so funciona em luz normal.
+    if issue is None:
         clamped_boxes = _leaf_based_germination_fallback(img_bgr, clamped_boxes, w, h)
-    # Fallbacks baseados em sinal vegetal rodam em todos os modos.
-    clamped_boxes = _green_component_germination_fallback(img_bgr, clamped_boxes, image_quality)
-    clamped_boxes = _tiny_green_germination_fallback(img_bgr, clamped_boxes, image_quality)
-    # Hybrid grid+cluster: 1 planta por cluster contiguo DENTRO de cada cell.
-    # Resolve simultaneamente:
-    # - false positives (cells vazias com folha-respingo de vizinha)
-    # - sub-contagem (folhas tocando entre cells viravam 1 cluster)
-    # - bandeja vazia (sem grid_cells, naturalmente excluida)
-    clamped_boxes = _hybrid_grid_cluster_fallback(img_bgr, clamped_boxes, image_quality)
-    # Cluster global ainda eh util pra plantas fora da grade (ex: borda).
-    if not magenta_mode:
+
+    # green_component pega aglomerados verdes grandes em LED; em luz normal
+    # duplica o trabalho do YOLO.
+    if issue in {"led_purple", "led_magenta"}:
+        clamped_boxes = _green_component_germination_fallback(img_bgr, clamped_boxes, image_quality)
+
+    # tiny_green em luz normal gera falsos positivos em residuos verdes;
+    # em LED roxo/magenta ajuda a recuperar mudas pequenas escuras.
+    if issue in {"led_purple", "led_magenta"}:
+        clamped_boxes = _tiny_green_germination_fallback(img_bgr, clamped_boxes, image_quality)
+
+    # Hybrid intra-cell so em magenta, onde YOLO tende a falhar completamente.
+    if issue == "led_magenta":
+        clamped_boxes = _hybrid_grid_cluster_fallback(img_bgr, clamped_boxes, image_quality)
+
+    # cluster_based fica apenas no LED roxo, onde o sinal vegetal e medio.
+    if issue == "led_purple":
         clamped_boxes = _cluster_based_germination_fallback(img_bgr, clamped_boxes, image_quality)
     if magenta_mode:
         clamped_boxes = _filter_germination_centers_by_roi(clamped_boxes, _magenta_grid_roi(img_bgr))
     clamped_boxes = _filter_germination_by_green_signal(signal_img_bgr, clamped_boxes)
+    clamped_boxes = _nms_germination_boxes(clamped_boxes, iou_threshold=0.50)
     clamped_boxes = _split_tall_germination_boxes(signal_img_bgr, clamped_boxes)
     clamped_boxes = _dedupe_germination_boxes(clamped_boxes)
+    clamped_boxes = _nms_germination_boxes(clamped_boxes, iou_threshold=0.50)
     germ_boxes: list[tuple[int, int, int, int, float]] = [
         (bbox[0], bbox[1], bbox[2], bbox[3], conf)
         for cls_name, conf, bbox in clamped_boxes
