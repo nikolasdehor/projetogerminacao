@@ -117,9 +117,10 @@ def _amplify_green_on_plants(img_bgr: np.ndarray) -> np.ndarray:
     b, g, r = cv2.split(img_bgr)
     g_out = g.astype(np.float32)
     mask = plant_mask > 0
-    # Amplifica G nos pixels da planta: 3.5x mas com piso de 90 (forca o
-    # modelo a ver folha mesmo quando o residuo era de 25).
-    g_out[mask] = np.maximum(g_out[mask] * 3.5, 90.0)
+    # Amplifica G nos pixels da planta. 5x com piso 130 (era 3.5/90 antes;
+    # tunado em 2026-05-26 apos teste mostrar que 3.5/90 dava 19 deteccoes
+    # mas o modelo perdia plantas no meio com G residual baixo).
+    g_out[mask] = np.maximum(g_out[mask] * 5.0, 130.0)
     g_out = np.clip(g_out, 0, 255).astype(np.uint8)
 
     pct = float(np.count_nonzero(mask)) / mask.size * 100
