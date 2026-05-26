@@ -257,12 +257,23 @@ def _assess_image_quality(img_bgr: np.ndarray) -> dict:
 
 
 def _enhance_for_yolo(img_bgr: np.ndarray, quality: dict) -> np.ndarray:
-    """Aplica filtros leves antes do YOLO, preservando a imagem original para anotação."""
+    """Aplica filtros leves antes do YOLO, preservando a imagem original para anotação.
+
+    O modelo atual (treinado 2026-05-26) foi treinado nas fotos cruas do WhatsApp
+    com LED roxo natural, entao normalizacao Gray World + CLAHE em led_purple ou
+    luz neutra atrapalha. So mantemos _reconstruct_magenta_for_yolo para led_magenta
+    extremo, onde o canal verde precisa ser reconstruido para o YOLO conseguir achar
+    contraste de planta.
+
+    Para desligar tambem o magenta-reconstruct (debug), exporte GERMINAVISION_SKIP_NORMALIZE=1.
+    """
+    if os.environ.get("GERMINAVISION_SKIP_NORMALIZE") == "1":
+        return img_bgr
+
     if quality.get("issue") == "led_magenta":
         return _reconstruct_magenta_for_yolo(img_bgr)
 
-    result = _normalize_lighting(img_bgr)
-    return result
+    return img_bgr
 
 
 def _plant_mask_from_hsv(hsv: np.ndarray, include_led_shadow: bool = True) -> np.ndarray:
