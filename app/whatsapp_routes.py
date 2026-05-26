@@ -15,9 +15,17 @@ from flask import (
     Blueprint, current_app, jsonify, render_template, request
 )
 
+from app.rate_limit import get_rate_limit_store
+
 # Dedup de message_id para descartar reentregas da Evolution API
 _seen_msg_ids: deque[str] = deque(maxlen=500)
 _seen_ids_lock = Lock()
+
+GROUP_RESPONSE_MODE = os.getenv("GROUP_RESPONSE_MODE", "image_always_text_mention").lower()
+ALLOWED_GROUPS = [
+    g.strip() for g in os.getenv("ALLOWED_GROUPS", "").split(",") if g.strip()
+]
+_VALID_GROUP_RESPONSE_MODES = {"mention_only", "image_always_text_mention", "all", "off"}
 
 # Pool de workers com backpressure: max 2 inferências YOLO simultâneas
 _MAX_WORKERS = 2
@@ -60,6 +68,84 @@ def _extract_quoted_text(msg: dict) -> str | None:
         or quoted.get("documentMessage", {}).get("caption")
         or "(mídia sem legenda)"
     )
+
+
+def _group_response_mode() -> str:
+    mode = os.getenv("GROUP_RESPONSE_MODE", GROUP_RESPONSE_MODE).strip().lower()
+    if mode not in _VALID_GROUP_RESPONSE_MODES:
+        return "image_always_text_mention"
+    return mode
+
+
+def _allowed_groups() -> list[str]:
+    raw = os.getenv("ALLOWED_GROUPS")
+    if raw is None:
+        return ALLOWED_GROUPS
+    return [g.strip() for g in raw.split(",") if g.strip()]
+
+
+def _extract_message_text(msg: dict) -> str:
+    if not isinstance(msg, dict):
+        return ""
+    return (
+        msg.get("conversation")
+        or msg.get("extendedTextMessage", {}).get("text")
+        or msg.get("imageMessage", {}).get("caption")
+        or msg.get("documentMessage", {}).get("caption")
+        or ""
+    ).strip()
+
+
+def _message_contexts(msg: dict) -> list[dict]:
+    if not isinstance(msg, dict):
+        return []
+    contexts = []
+    for msg_type in ("extendedTextMessage", "imageMessage", "documentMessage"):
+        ctx = msg.get(msg_type, {}).get("contextInfo", {})
+        if isinstance(ctx, dict) and ctx:
+            contexts.append(ctx)
+    return contexts
+
+
+def _has_bot_mention(msg: dict, text: str, bot_phone: str) -> bool:
+    if not bot_phone:
+        return False
+
+    bot_phone = bot_phone.strip().lower()
+    if f"@{bot_phone}" in (text or "").lower():
+        return True
+
+    for ctx in _message_contexts(msg):
+        mentioned_jids = ctx.get("mentionedJid", [])
+        if isinstance(mentioned_jids, str):
+            mentioned_jids = [mentioned_jids]
+        if any(bot_phone in str(mentioned_jid).lower() for mentioned_jid in mentioned_jids):
+            return True
+
+        quoted_from = ctx.get("participant", "")
+        if bot_phone in str(quoted_from).lower():
+            return True
+
+    return False
+
+
+def _strip_bot_mention(text: str, bot_phone: str) -> str:
+    if not text or not bot_phone:
+        return text
+    return (
+        text.replace(f"@{bot_phone}", "")
+        .replace(f"@+{bot_phone}", "")
+        .strip()
+    )
+
+
+def _sender_short_label(sender: str) -> str:
+    sender = sender.strip()
+    if not sender:
+        return "usuario"
+    if len(sender) <= 8:
+        return f"+{sender}"
+    return f"+{sender[:4]}...{sender[-4:]}"
 
 
 # ── Página de configuração ────────────────────────────────────────────────────
@@ -296,19 +382,75 @@ def _handle_message(payload: dict) -> bool:
             _seen_msg_ids.append(msg_id)
 
     remote_jid = key.get("remoteJid", "")
-    # Extrai número limpo (5511999999999)
-    sender = remote_jid.split("@")[0] if "@" in remote_jid else remote_jid
+    participant_jid = key.get("participant", "")
+
+    if remote_jid.endswith("@g.us"):
+        chat_type = "group"
+        group_jid = remote_jid
+        # Em grupo, o historico precisa ficar no usuario real, nao no JID do grupo.
+        sender_jid = participant_jid or remote_jid
+        sender = sender_jid.split("@")[0] if "@" in sender_jid else sender_jid
+        reply_target = group_jid
+    elif remote_jid.endswith("@broadcast"):
+        return False
+    else:
+        chat_type = "dm"
+        group_jid = None
+        # Em DM, a Evolution espera o numero limpo como destino.
+        sender = remote_jid.split("@")[0] if "@" in remote_jid else remote_jid
+        reply_target = sender
 
     if not sender:
         return False
 
     msg = data.get("message", {})
+    if not isinstance(msg, dict):
+        return False
+
+    raw_text = _extract_message_text(msg)
+    is_image = bool(msg.get("imageMessage") or msg.get("documentMessage"))
+
+    if chat_type == "group":
+        allowed_groups = _allowed_groups()
+        if allowed_groups and group_jid not in allowed_groups:
+            return False
+
+        mode = _group_response_mode()
+        if mode == "off":
+            return False
+
+        bot_phone = os.getenv("EVOLUTION_INSTANCE_PHONE", "").strip()
+        has_mention = _has_bot_mention(msg, raw_text, bot_phone)
+
+        if mode == "mention_only" and not has_mention:
+            return False
+        if mode == "image_always_text_mention" and not is_image and not has_mention:
+            return False
 
     # Filtra tipos de mensagem que não devem ser processados (reactions, protocol, etc.)
     _ALLOWED_MSG_TYPES = {"imageMessage", "conversation", "extendedTextMessage", "documentMessage"}
     if msg and not any(k in msg for k in _ALLOWED_MSG_TYPES):
         current_app.logger.info(f"[skip] tipo de mensagem ignorado: {list(msg.keys())}")
         return True
+
+    if chat_type == "group":
+        rate_store = get_rate_limit_store()
+        if is_image:
+            if rate_store.count_in_window(sender, "image", window_seconds=3600) >= 5:
+                sender_short_label = _sender_short_label(sender)
+                client = get_client()
+                client.send_text(
+                    reply_target,
+                    f"{sender_short_label}: limite de 5 fotos/hora atingido. "
+                    "Tente de novo daqui a pouco.",
+                )
+                return False
+            rate_store.record(sender, "image")
+        else:
+            if rate_store.count_in_window(sender, "text", window_seconds=3600) >= 15:
+                return False
+            rate_store.record(sender, "text")
+
     client = get_client()
 
     # ── Imagem recebida → roda inferência ──────────────────────────────────
@@ -318,15 +460,13 @@ def _handle_message(payload: dict) -> bool:
             or msg.get("documentMessage", {}).get("caption")
             or ""
         ).strip() or None
-        _handle_image_message(client, sender, payload, raw_caption=raw_caption)
+        _handle_image_message(client, sender, reply_target, payload, raw_caption=raw_caption)
         return True
 
     # ── Texto recebido → chatbot ou comandos ───────────────────────────────
-    text = (
-        msg.get("conversation")
-        or msg.get("extendedTextMessage", {}).get("text")
-        or ""
-    ).strip().lower()
+    if chat_type == "group":
+        raw_text = _strip_bot_mention(raw_text, os.getenv("EVOLUTION_INSTANCE_PHONE", "").strip())
+    text = raw_text.strip().lower()
 
     if not text:
         return True
@@ -335,21 +475,27 @@ def _handle_message(payload: dict) -> bool:
 
     # Comandos especiais
     if text in ("status", "estatísticas", "estatisticas", "stats"):
-        _handle_status_command(client, sender)
+        _handle_status_command(client, reply_target)
     elif text in ("dica", "dicas", "tip"):
-        _handle_tip_command(client, sender)
+        _handle_tip_command(client, reply_target)
     elif text in ("histórico", "historico", "history"):
-        _handle_history_command(client, sender)
+        _handle_history_command(client, reply_target)
     elif text in ("ajuda", "help", "menu", "?"):
-        _handle_help_command(client, sender)
+        _handle_help_command(client, reply_target)
     else:
         # Passa para o GerminaBot (IA) com contexto de quote se houver
-        _handle_chat_message(client, sender, text, quoted=quoted)
+        _handle_chat_message(client, sender, reply_target, text, quoted=quoted)
 
     return True
 
 
-def _handle_image_message(client, sender: str, payload: dict, raw_caption: str | None = None):
+def _handle_image_message(
+    client,
+    sender: str,
+    reply_target: str,
+    payload: dict,
+    raw_caption: str | None = None,
+) -> None:
     """Processa imagem: baixa, roda YOLO, envia resultado."""
     from flask import current_app
     from app.inference import run_inference
@@ -361,13 +507,13 @@ def _handle_image_message(client, sender: str, payload: dict, raw_caption: str |
     caption, tray_capacity_override = _parse_caption(raw_caption)
 
     # Notifica que estamos processando (com indicador "digitando..." para feedback visual)
-    client.send_presence(sender, "composing", delay_ms=3000)
-    client.send_text(sender, "🌱 *Analisando a bandeja...*\nEstou procurando plantas, folhas e células visíveis.")
+    client.send_presence(reply_target, "composing", delay_ms=3000)
+    client.send_text(reply_target, "🌱 *Analisando a bandeja...*\nEstou procurando plantas, folhas e células visíveis.")
 
     # Baixa a imagem
     image_path = client.download_media(payload, upload_dir)
     if not image_path:
-        client.send_text(sender, "⚠️ Não consegui baixar a imagem. Tente enviar novamente.")
+        client.send_text(reply_target, "⚠️ Não consegui baixar a imagem. Tente enviar novamente.")
         return
 
     # Roda inferência (capacidade da caption passada para sanity check interno)
@@ -380,7 +526,7 @@ def _handle_image_message(client, sender: str, payload: dict, raw_caption: str |
             tray_capacity_override=tray_capacity_override,
         )
     except Exception as e:
-        client.send_text(sender, f"❌ Erro na análise: {e}")
+        client.send_text(reply_target, f"❌ Erro na análise: {e}")
         return
 
     capacity = result["cells_detected"]
@@ -535,15 +681,15 @@ def _handle_image_message(client, sender: str, payload: dict, raw_caption: str |
             img_bytes = result_image_path.read_bytes()
             # Evolution API espera base64 puro, sem prefixo data:image/...;base64,
             img_b64 = base64.b64encode(img_bytes).decode()
-            client.send_image_base64(sender, img_b64, filename="resultado.jpg", caption=texto)
+            client.send_image_base64(reply_target, img_b64, filename="resultado.jpg", caption=texto)
         except Exception:
             traceback.print_exc()
-            client.send_text(sender, texto)
+            client.send_text(reply_target, texto)
     else:
-        client.send_text(sender, texto)
+        client.send_text(reply_target, texto)
 
 
-def _handle_status_command(client, sender: str):
+def _handle_status_command(client, reply_target: str) -> None:
     """Retorna estatísticas gerais."""
     from flask import current_app
     import sqlite3
@@ -583,19 +729,19 @@ def _handle_status_command(client, sender: str):
     except Exception as e:
         texto = f"❌ Erro ao consultar estatísticas: {e}"
 
-    client.send_text(sender, texto)
+    client.send_text(reply_target, texto)
 
 
-def _handle_tip_command(client, sender: str):
+def _handle_tip_command(client, reply_target: str) -> None:
     """Envia dica aleatória."""
     import random
     from app.chatbot import DICAS_GERMINACAO
 
     dica = random.choice(DICAS_GERMINACAO)
-    client.send_text(sender, f"💡 *Dica do GerminaVision:*\n\n{dica}")
+    client.send_text(reply_target, f"💡 *Dica do GerminaVision:*\n\n{dica}")
 
 
-def _handle_history_command(client, sender: str):
+def _handle_history_command(client, reply_target: str) -> None:
     """Retorna últimas 5 análises."""
     from flask import current_app
     from app.database import get_history
@@ -603,7 +749,7 @@ def _handle_history_command(client, sender: str):
     records = get_history(current_app.config["DB_PATH"], limit=5)
 
     if not records:
-        client.send_text(sender, "📋 *Nenhuma análise no histórico.*\n\n📷 Envie uma foto para começar!")
+        client.send_text(reply_target, "📋 *Nenhuma análise no histórico.*\n\n📷 Envie uma foto para começar!")
         return
 
     texto = "📋 *Últimas análises — GerminaVision*\n\n"
@@ -615,10 +761,10 @@ def _handle_history_command(client, sender: str):
             f"Folhas: {r['leaf_avg']}\n\n"
         )
 
-    client.send_text(sender, texto)
+    client.send_text(reply_target, texto)
 
 
-def _handle_help_command(client, sender: str):
+def _handle_help_command(client, reply_target: str) -> None:
     """Envia menu de ajuda."""
     texto = (
         "🌱 *GerminaVision — Menu de Ajuda*\n\n"
@@ -631,16 +777,22 @@ def _handle_help_command(client, sender: str):
         "e nosso GerminaBot com IA responderá!\n\n"
         "_Desenvolvido com visão computacional YOLO11_ 🤖"
     )
-    client.send_text(sender, texto)
+    client.send_text(reply_target, texto)
 
 
-def _handle_chat_message(client, sender: str, text: str, quoted: str | None = None):
+def _handle_chat_message(
+    client,
+    sender: str,
+    reply_target: str,
+    text: str,
+    quoted: str | None = None,
+) -> None:
     """Passa mensagem para o GerminaBot (IA) com indicador 'digitando...' e memória de conversa."""
     from flask import current_app
     from app.chatbot import gerar_resposta
 
     # Dispara "digitando..." imediatamente. O delay 5000ms cobre a chamada LLM (~3-8s).
-    client.send_presence(sender, "composing", delay_ms=5000)
+    client.send_presence(reply_target, "composing", delay_ms=5000)
 
     if quoted:
         quoted_short = quoted[:300] + ("..." if len(quoted) > 300 else "")
@@ -651,5 +803,5 @@ def _handle_chat_message(client, sender: str, text: str, quoted: str | None = No
     resposta = gerar_resposta(composed, current_app.config["DB_PATH"], sender=sender)
 
     # Encerra o indicador antes de mandar a resposta
-    client.send_presence(sender, "paused", delay_ms=0)
-    client.send_text(sender, resposta)
+    client.send_presence(reply_target, "paused", delay_ms=0)
+    client.send_text(reply_target, resposta)
