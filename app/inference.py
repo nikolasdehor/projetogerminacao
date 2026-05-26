@@ -1691,9 +1691,16 @@ def _hybrid_grid_cluster_fallback(
             additions.append(("Germinacao", conf, bbox))
             clusters_added_in_cell += 1
 
-        # Safety: se cell tem coverage alto mas nenhum cluster passou
-        # (massa fragmentada), adiciona 1 planta pra nao perder a cell.
-        if clusters_added_in_cell == 0 and coverage >= coverage_threshold:
+        # Safety removida em 2026-05-26: a heuristica de usar a massa verde
+        # inteira da cell como bbox gerava bboxes "celulares" cobrindo varias
+        # plantas separadas. O modelo novo (treinado 2026-05-26, mAP50 0.85)
+        # confia em si proprio para esses casos. Pra reativar (rollback),
+        # exporte GERMINAVISION_HYBRID_CELL_SAFETY=1.
+        if (
+            clusters_added_in_cell == 0
+            and coverage >= coverage_threshold
+            and os.environ.get("GERMINAVISION_HYBRID_CELL_SAFETY") == "1"
+        ):
             ys, xs = np.where(cell_mask > 0)
             if ys.size > 0:
                 bx1 = ix1 + int(xs.min())
