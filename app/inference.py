@@ -1126,6 +1126,78 @@ def _grid_occupation_germination_fallback(
     return boxes + additions
 
 
+def _cluster_based_germination_fallback(
+    img_bgr: np.ndarray,
+    boxes: list[tuple[str, float, tuple[int, int, int, int]]],
+) -> list[tuple[str, float, tuple[int, int, int, int]]]:
+    """Promove clusters contiguos grandes de plant_mask a germinacoes.
+
+    Substitui a heuristica de "1 planta por cell ocupada" que infla a contagem
+    quando folhas grandes extrapolam pra cells vizinhas. Cada cluster contiguo
+    corresponde a UMA planta, independente de quantas cells visualmente cruza.
+    """
+    h, w = img_bgr.shape[:2]
+    img_area = float(h * w)
+
+    hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+    plant_mask = _plant_mask_from_hsv(hsv, include_led_shadow=True)
+    # Morphology pra unir folhas separadas da mesma planta e suavizar borda.
+    plant_mask = cv2.morphologyEx(
+        plant_mask, cv2.MORPH_OPEN,
+        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)),
+    )
+    close_k = min(5, max(3, int(min(h, w) * 0.004) | 1))
+    plant_mask = cv2.morphologyEx(
+        plant_mask, cv2.MORPH_CLOSE,
+        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (close_k, close_k)),
+    )
+
+    n_labels, _, stats, centroids = cv2.connectedComponentsWithStats(
+        plant_mask, connectivity=8
+    )
+
+    germ_boxes = [bbox for cls_name, _, bbox in boxes if cls_name in GERMINATION_CLASSES]
+    additions: list[tuple[str, float, tuple[int, int, int, int]]] = []
+
+    min_area = max(400.0, img_area * 0.0004)  # ~0.04% da imagem.
+    max_area = img_area * 0.15  # Cluster maior que 15% provavelmente eh varios juntos.
+
+    for label_id in range(1, n_labels):
+        x, y, bw, bh, area = stats[label_id]
+        if area < min_area or area > max_area:
+            continue
+        if bw < 20 or bh < 20:
+            continue
+        cx, cy = centroids[label_id]
+
+        covered = False
+        for gx1, gy1, gx2, gy2 in germ_boxes:
+            if gx1 <= cx <= gx2 and gy1 <= cy <= gy2:
+                # YOLO ja viu, nao duplica.
+                covered = True
+                break
+        if covered:
+            continue
+        # Usa o nucleo do cluster para nao colapsar plantas vizinhas no
+        # dedupe final quando folhas grandes invadem a cell ao lado.
+        core_w = max(20, int(round(float(bw) * 0.45)))
+        core_h = max(20, int(round(float(bh) * 0.45)))
+        bx1 = max(0, int(round(float(cx) - core_w / 2.0)))
+        by1 = max(0, int(round(float(cy) - core_h / 2.0)))
+        bx2 = min(w, int(round(float(cx) + core_w / 2.0)))
+        by2 = min(h, int(round(float(cy) + core_h / 2.0)))
+        if bx2 <= bx1 or by2 <= by1:
+            continue
+        bbox = (bx1, by1, bx2, by2)
+        area_norm = min(1.0, area / (img_area * 0.01))
+        conf = round(min(0.70, 0.40 + area_norm * 0.30), 3)
+        additions.append(("Germinacao", conf, bbox))
+
+    if additions:
+        print(f"  [germ] {len(additions)} germinacao(es) por cluster contiguo (connected components)")
+    return boxes + additions
+
+
 def _magenta_grid_roi(img_bgr: np.ndarray) -> tuple[int, int, int, int] | None:
     """Estima a área útil da bandeja em fotos magenta extremas."""
     h, w = img_bgr.shape[:2]
@@ -1527,7 +1599,14 @@ def run_inference(
     # Fallbacks baseados em sinal verde HSV rodam em todos os modos
     clamped_boxes = _green_component_germination_fallback(img_bgr, clamped_boxes)
     clamped_boxes = _tiny_green_germination_fallback(img_bgr, clamped_boxes)
-    clamped_boxes = _grid_occupation_germination_fallback(img_bgr, clamped_boxes)
+    # Cluster-based: 1 planta por cluster contiguo. Em magenta_mode substitui
+    # grid_occupation (mais preciso pra folhas grandes); em luz normal,
+    # complementa grid_occupation (cobre o que escapou).
+    if magenta_mode:
+        clamped_boxes = _cluster_based_germination_fallback(img_bgr, clamped_boxes)
+    else:
+        clamped_boxes = _grid_occupation_germination_fallback(img_bgr, clamped_boxes)
+        clamped_boxes = _cluster_based_germination_fallback(img_bgr, clamped_boxes)
     if magenta_mode:
         clamped_boxes = _filter_germination_centers_by_roi(clamped_boxes, _magenta_grid_roi(img_bgr))
     clamped_boxes = _filter_germination_by_green_signal(signal_img_bgr, clamped_boxes)
