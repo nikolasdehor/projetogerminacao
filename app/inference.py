@@ -736,15 +736,32 @@ def _split_megaboxes(
             result.append(item)
             continue
 
-        n_labels, _labels, stats, _centroids = cv2.connectedComponentsWithStats(
-            local_mask, connectivity=8,
+        # Erode a mascara local para forcar separacao entre plantas que se
+        # tocam mas sao distintas. Escala com o tamanho do bbox para
+        # erosao proporcional (5 porcento da menor dimensao).
+        local_h, local_w = local_mask.shape
+        erode_size = max(3, int(min(local_h, local_w) * 0.05))
+        eroded_mask = cv2.erode(
+            local_mask,
+            cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (erode_size, erode_size)),
+            iterations=1,
         )
-        # Components validos: area >= 12 porcento do bbox
-        min_comp_area = box_area * 0.12
+
+        n_labels, _labels, stats, _centroids = cv2.connectedComponentsWithStats(
+            eroded_mask, connectivity=8,
+        )
+        # Components validos: area >= 6 porcento do bbox apos erosao
+        # (era 12 porcento, mas erosao diminui area absoluta dos componentes).
+        min_comp_area = box_area * 0.06
         valid_comps: list[tuple[int, int, int, int, int]] = []
         for label_id in range(1, n_labels):
             cx, cy, cw, ch, area = stats[label_id]
-            if area >= min_comp_area and cw >= 12 and ch >= 12:
+            if area >= min_comp_area and cw >= 10 and ch >= 10:
+                # Restaura tamanho original dilatando o componente
+                cx = max(0, cx - erode_size)
+                cy = max(0, cy - erode_size)
+                cw = min(local_w - cx, cw + 2 * erode_size)
+                ch = min(local_h - cy, ch + 2 * erode_size)
                 valid_comps.append((cx, cy, cw, ch, area))
 
         if len(valid_comps) < 2:
