@@ -682,6 +682,95 @@ def _green_component_germination_fallback(
     return boxes + additions
 
 
+def _split_megaboxes(
+    img_bgr: np.ndarray,
+    boxes: list[tuple[str, float, tuple[int, int, int, int]]],
+    quality: dict | None = None,
+    area_ratio_threshold: float = 0.05,
+) -> list[tuple[str, float, tuple[int, int, int, int]]]:
+    """Quebra deteccoes de Germinacao cuja bbox cobre mais de 5 porcento da imagem.
+
+    Aglomerados de plantas adultas ou folhas que se tocam viram um unico bbox
+    gigante. Esta funcao tenta quebrar via connected components da mascara
+    verde dentro do bbox. Se encontrar 2+ componentes validos, substitui o
+    megabox pelos componentes individuais. Senao, deixa como esta (pode ser
+    1 planta legitimamente grande).
+
+    Desligar com GERMINAVISION_SPLIT_MEGABOX=0.
+    """
+    if os.environ.get("GERMINAVISION_SPLIT_MEGABOX") == "0":
+        return boxes
+
+    h, w = img_bgr.shape[:2]
+    img_area = h * w
+    area_threshold = img_area * area_ratio_threshold
+    if quality is None:
+        quality = _assess_image_quality(img_bgr)
+
+    plant_mask = _plant_mask_auto(img_bgr, quality)
+    plant_mask = cv2.morphologyEx(
+        plant_mask, cv2.MORPH_OPEN,
+        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)),
+    )
+    plant_mask = cv2.morphologyEx(
+        plant_mask, cv2.MORPH_CLOSE,
+        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)),
+    )
+
+    result: list[tuple[str, float, tuple[int, int, int, int]]] = []
+    splits = 0
+    for item in boxes:
+        cls_name, conf, bbox = item
+        if cls_name not in GERMINATION_CLASSES:
+            result.append(item)
+            continue
+
+        x1, y1, x2, y2 = bbox
+        box_area = max(1, (x2 - x1) * (y2 - y1))
+        if box_area < area_threshold:
+            result.append(item)
+            continue
+
+        local_mask = plant_mask[y1:y2, x1:x2]
+        if local_mask.size == 0:
+            result.append(item)
+            continue
+
+        n_labels, _labels, stats, _centroids = cv2.connectedComponentsWithStats(
+            local_mask, connectivity=8,
+        )
+        # Components validos: area >= 12 porcento do bbox
+        min_comp_area = box_area * 0.12
+        valid_comps: list[tuple[int, int, int, int, int]] = []
+        for label_id in range(1, n_labels):
+            cx, cy, cw, ch, area = stats[label_id]
+            if area >= min_comp_area and cw >= 12 and ch >= 12:
+                valid_comps.append((cx, cy, cw, ch, area))
+
+        if len(valid_comps) < 2:
+            # Apenas 1 componente forte = bbox legitima de planta grande
+            result.append(item)
+            continue
+
+        # Substitui o megabox pelos componentes
+        for cx, cy, cw, ch, _area in valid_comps:
+            abs_x1 = x1 + int(cx)
+            abs_y1 = y1 + int(cy)
+            abs_x2 = abs_x1 + int(cw)
+            abs_y2 = abs_y1 + int(ch)
+            split_bbox = _expand_bbox(
+                (abs_x1, abs_y1, abs_x2, abs_y2), w, h, ratio=0.10,
+            )
+            # Conf reduzida: cada planta filha herda 85 porcento da original
+            result.append((cls_name, round(conf * 0.85, 3), split_bbox))
+
+        splits += 1
+
+    if splits:
+        print(f"  [megabox] {splits} bbox(es) gigante(s) quebradas em componentes")
+    return result
+
+
 def _filter_germination_by_green_signal(
     img_bgr: np.ndarray,
     boxes: list[tuple[str, float, tuple[int, int, int, int]]],
@@ -2242,6 +2331,9 @@ def run_inference(
     if magenta_mode:
         clamped_boxes = _filter_germination_centers_by_roi(clamped_boxes, _magenta_grid_roi(img_bgr))
     clamped_boxes = _filter_germination_by_green_signal(signal_img_bgr, clamped_boxes)
+    # Anti-megabox: quebra bboxes gigantes (> 5 porcento da imagem) em
+    # componentes verdes individuais quando ha 2+ blobs validos dentro.
+    clamped_boxes = _split_megaboxes(img_bgr, clamped_boxes, image_quality)
     clamped_boxes = _nms_germination_boxes(clamped_boxes, iou_threshold=0.50)
     clamped_boxes = _split_tall_germination_boxes(signal_img_bgr, clamped_boxes)
     clamped_boxes = _dedupe_germination_boxes(clamped_boxes)
