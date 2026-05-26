@@ -106,21 +106,30 @@ def _amplify_green_on_plants(img_bgr: np.ndarray) -> np.ndarray:
     if cv2.countNonZero(plant_mask) == 0:
         return img_bgr.copy()
 
-    # Dilata mais agressivamente (5x5 + 2 iteracoes) para capturar bordas de
-    # folha e folhas adjacentes que o threshold rigido perde. Era 3x3, 1 iter.
+    # Dilatacao 3x3 + 1 iter: captura bordas sem unir folhas vizinhas
+    # (5x5/2iter testado em 2026-05-26 unia tudo num "tapete verde", saturava
+    # o canal G e o modelo perdia textura interna das folhas).
     plant_mask = cv2.dilate(
         plant_mask,
-        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)),
-        iterations=2,
+        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)),
+        iterations=1,
     )
 
     b, g, r = cv2.split(img_bgr)
-    g_out = g.astype(np.float32)
     mask = plant_mask > 0
-    # Amplifica G nos pixels da planta. 7x com piso 170 (era 5/130).
-    # Tunado em 2026-05-26 a pedido do Nikolas: "tingir mais de verde"
-    # para o modelo enxergar plantas que ainda estavam ficando ofuscadas.
-    g_out[mask] = np.maximum(g_out[mask] * 7.0, 170.0)
+
+    # CLAHE no canal G inteiro: realca contraste local (folha brilhante
+    # vs folha sombra) sem saturar pico. clipLimit moderado pra nao
+    # estourar regioes ja claras.
+    clahe = cv2.createCLAHE(clipLimit=3.5, tileGridSize=(8, 8))
+    g_clahe = clahe.apply(g)
+
+    g_out = g.astype(np.float32)
+    # Onde tem planta: usa o G com CLAHE + offset de +90 para garantir que
+    # mesmo as folhas mais escuras passem do nivel que o YOLO precisa.
+    # Mantem o gradient relativo (folha brilhante continua mais brilhante
+    # que folha sombra), o que evita o "borrao" achatado.
+    g_out[mask] = g_clahe[mask].astype(np.float32) + 90.0
     g_out = np.clip(g_out, 0, 255).astype(np.uint8)
 
     pct = float(np.count_nonzero(mask)) / mask.size * 100
