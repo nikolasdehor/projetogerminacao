@@ -257,7 +257,7 @@ def _enhance_for_yolo(img_bgr: np.ndarray, quality: dict) -> np.ndarray:
 
 
 def _plant_mask_from_hsv(hsv: np.ndarray, include_led_shadow: bool = True) -> np.ndarray:
-    """Máscara de tecido vegetal em luz normal e em LED roxo sem usar fundo claro."""
+    """Máscara de tecido vegetal em luz normal, LED roxo e LED magenta extremo."""
     bright_green = cv2.inRange(hsv, (25, 35, 45), (95, 255, 255))
     if not include_led_shadow:
         return bright_green
@@ -265,14 +265,21 @@ def _plant_mask_from_hsv(hsv: np.ndarray, include_led_shadow: bool = True) -> np
     # Sob LED roxo, folhas escuras migram para H 90-135 e perdem o verde clássico.
     # O teto de V evita que plástico branco/rosa estourado vire planta.
     led_shadow = cv2.inRange(hsv, (80, 18, 25), (135, 255, 225))
-    return cv2.bitwise_or(bright_green, led_shadow)
+    # Em LED magenta extremo, planta e substrato compartilham H ~145, mas as
+    # plantas mantêm saturação mais alta em campo.
+    magenta_leaf = cv2.inRange(hsv, (130, 190, 70), (175, 255, 235))
+    return cv2.bitwise_or(cv2.bitwise_or(bright_green, led_shadow), magenta_leaf)
 
 
 def _plant_signal_ratio(hsv_crop: np.ndarray) -> float:
     if hsv_crop.size == 0:
         return 0.0
     area = hsv_crop.shape[0] * hsv_crop.shape[1]
-    mask = _plant_mask_from_hsv(hsv_crop)
+    # Métrica conservadora usada para validar boxes: mantém o contrato antigo,
+    # sem o range magenta extremo que é amplo demais para crops isolados.
+    bright_green = cv2.inRange(hsv_crop, (25, 35, 45), (95, 255, 255))
+    led_shadow = cv2.inRange(hsv_crop, (80, 18, 25), (135, 255, 225))
+    mask = cv2.bitwise_or(bright_green, led_shadow)
     return float(cv2.countNonZero(mask)) / max(area, 1)
 
 
@@ -864,6 +871,46 @@ def _grid_bands_from_image(
     return bright_grid, vertical_bands, horizontal_bands
 
 
+def _grid_cell_boxes_magenta(img_bgr: np.ndarray) -> list[tuple[int, int, int, int]]:
+    """Estima cells dividindo a ROI da bandeja magenta em grade uniforme.
+
+    Usado como fallback quando _grid_cell_boxes, que depende de bandas
+    brilhantes, falha em fotos com LED magenta muito saturado.
+
+    Estima número de colunas/linhas pelo lado curto/longo da ROI assumindo
+    células aproximadamente quadradas, e pelo metadado de bandeja padrão
+    (TRAY_CAPACITY=200 sugere ~7-8 cols x ~25-28 rows mas para fotos
+    parciais frequentemente vemos 5-7 cols x 6-9 rows visíveis).
+    """
+    roi = _magenta_grid_roi(img_bgr)
+    if roi is None:
+        return []
+    rx1, ry1, rx2, ry2 = roi
+    roi_w, roi_h = rx2 - rx1, ry2 - ry1
+    if roi_w <= 30 or roi_h <= 30:
+        return []
+
+    # Aproxima células quadradas. Range plausível: 5-9 cols visíveis.
+    cell_size_est = int(min(roi_w, roi_h) / 6)
+    cell_size_est = max(60, min(180, cell_size_est))
+
+    cols = max(2, int(round(roi_w / cell_size_est)))
+    rows = max(2, int(round(roi_h / cell_size_est)))
+    cell_w = roi_w / cols
+    cell_h = roi_h / rows
+
+    cells: list[tuple[int, int, int, int]] = []
+    for row in range(rows):
+        for col in range(cols):
+            x1 = int(round(rx1 + col * cell_w))
+            y1 = int(round(ry1 + row * cell_h))
+            x2 = int(round(rx1 + (col + 1) * cell_w))
+            y2 = int(round(ry1 + (row + 1) * cell_h))
+            if x2 > x1 and y2 > y1:
+                cells.append((x1, y1, x2, y2))
+    return cells
+
+
 def _grid_cell_boxes(img_bgr: np.ndarray) -> list[tuple[int, int, int, int]]:
     """Retorna boxes aproximadas das células visíveis da grade."""
     h, w = img_bgr.shape[:2]
@@ -888,7 +935,9 @@ def _tiny_green_germination_fallback(
     h, w = img_bgr.shape[:2]
     cells = _grid_cell_boxes(img_bgr)
     if not cells:
-        return boxes
+        cells = _grid_cell_boxes_magenta(img_bgr)
+        if not cells:
+            return boxes
 
     hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
     mask = _plant_mask_from_hsv(hsv, include_led_shadow=False)
@@ -971,7 +1020,9 @@ def _grid_occupation_germination_fallback(
     h, w = img_bgr.shape[:2]
     cells = _grid_cell_boxes(img_bgr)
     if not cells:
-        return boxes
+        cells = _grid_cell_boxes_magenta(img_bgr)
+        if not cells:
+            return boxes
 
     hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
     plant_mask = _plant_mask_from_hsv(hsv, include_led_shadow=True)
