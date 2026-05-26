@@ -89,21 +89,29 @@ class CellCountRegressionTest(unittest.TestCase):
         self.assertGreater(plant_mean[1], plant_mean[0])
 
     def test_magenta_display_paints_green_beyond_yolo_boxes(self):
-        """Garante que folhas detectadas via HSV (fora dos germ_boxes) também aparecem verdes."""
+        """Garante que folhas detectadas via canal G tambem aparecem verdes."""
         image = load_image("tests/fixtures/images/magenta-full-tray.jpeg")
         quality = _assess_image_quality(image)
         enhanced = _enhance_for_yolo(image, quality)
         # Sem germ_boxes (simula YOLO falhando totalmente)
         display = _naturalize_magenta_for_display(image, enhanced, [])
-        from app.inference import _plant_mask_from_hsv
-        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-        plant_mask = _plant_mask_from_hsv(hsv, include_led_shadow=True)
+        from app.inference import _magenta_plant_mask
+        plant_mask = _magenta_plant_mask(image)
         if cv2.countNonZero(plant_mask) < 500:
-            self.skipTest("HSV nao detecta planta nessa fixture")
+            self.skipTest("mascara magenta nao detecta planta nessa fixture")
         plant_pixels = display[plant_mask > 0]
-        # Onde HSV detecta planta, display.G deve ser claramente maior que R e B
+        # Onde a mascara detecta planta, display.G deve ser claramente maior que R e B
         self.assertGreater(plant_pixels[:, 1].mean(), plant_pixels[:, 2].mean() + 10)
         self.assertGreater(plant_pixels[:, 1].mean(), plant_pixels[:, 0].mean() + 10)
+
+    def test_magenta_plant_mask_excludes_substrate_and_empty_tray(self):
+        """Valida que canal G separa planta de substrato/bandeja vazia."""
+        from app.inference import _magenta_plant_mask
+        image = load_image("tests/fixtures/images/magenta-full-tray.jpeg")
+        mask = _magenta_plant_mask(image)
+        coverage = cv2.countNonZero(mask) / mask.size
+        self.assertGreater(coverage, 0.03, "deveria detectar plantas")
+        self.assertLess(coverage, 0.40, "nao deveria pegar substrato/bandeja vazia inteira")
 
     def test_side_cropped_purple_tray_does_not_count_border_slivers(self):
         image = load_image("tests/fixtures/images/side-crop-purple-12-cells.jpeg")

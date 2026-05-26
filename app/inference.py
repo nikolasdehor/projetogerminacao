@@ -93,11 +93,11 @@ def _naturalize_magenta_for_display(
     _enhanced_bgr: np.ndarray,
     germ_boxes: list[tuple[int, int, int, int, float]] | None = None,
 ) -> np.ndarray:
-    """Cria uma visualização naturalizada para fotos magenta extremas.
+    """Cria uma visualizacao naturalizada para fotos magenta extremas.
 
-    Pinta toda massa de planta detectada pela máscara HSV (não apenas dentro
+    Pinta toda massa de planta detectada pelo canal G (nao apenas dentro
     dos boxes do YOLO) sobre um substrato marrom estilizado, garantindo que
-    folhas maduras ignoradas pelo detector também apareçam verdes ao usuário.
+    folhas maduras ignoradas pelo detector tambem aparecam verdes ao usuario.
     """
     h, w = img_bgr.shape[:2]
     b, g, r = cv2.split(img_bgr.astype(np.float32))
@@ -131,19 +131,27 @@ def _naturalize_magenta_for_display(
     dark_mask = (light < 28) & (grid_mask == 0)
     natural[dark_mask] = (18, 20, 20)
 
-    # Plant mask GLOBAL (independente do YOLO) — captura folhas maduras que
-    # o detector ignora. Reusa o critério HSV que funciona em LED roxo.
-    plant_mask = _plant_mask_from_hsv(hsv, include_led_shadow=True)
-    plant_mask = cv2.morphologyEx(
-        plant_mask,
-        cv2.MORPH_OPEN,
-        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)),
-    )
-    plant_mask = cv2.morphologyEx(
-        plant_mask,
-        cv2.MORPH_CLOSE,
-        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)),
-    )
+    # Plant mask GLOBAL (independente do YOLO): captura folhas maduras que
+    # o detector ignora sob LED magenta extremo.
+    plant_mask = _magenta_plant_mask(img_bgr)
+    raw_plant_coverage = float(cv2.countNonZero(plant_mask)) / max(h * w, 1)
+    if raw_plant_coverage < 0.08:
+        plant_mask = cv2.morphologyEx(
+            plant_mask,
+            cv2.MORPH_CLOSE,
+            cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)),
+        )
+    else:
+        plant_mask = cv2.morphologyEx(
+            plant_mask,
+            cv2.MORPH_OPEN,
+            cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)),
+        )
+        plant_mask = cv2.morphologyEx(
+            plant_mask,
+            cv2.MORPH_CLOSE,
+            cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)),
+        )
     plant_mask[grid_mask > 0] = 0  # grade nunca vira planta
     plant_alpha = cv2.GaussianBlur(plant_mask, (5, 5), 0).astype(np.float32) / 255.0
     plant_alpha *= 0.55  # opacidade base do verde global
@@ -257,18 +265,66 @@ def _enhance_for_yolo(img_bgr: np.ndarray, quality: dict) -> np.ndarray:
 
 
 def _plant_mask_from_hsv(hsv: np.ndarray, include_led_shadow: bool = True) -> np.ndarray:
-    """Máscara de tecido vegetal em luz normal, LED roxo e LED magenta extremo."""
+    """Mascara de tecido vegetal em luz normal e LED roxo (NAO magenta extremo).
+
+    Para magenta extremo, use _magenta_plant_mask que usa canal G do BGR
+    diretamente (S nao distingue planta de substrato sob LED magenta puro).
+    """
     bright_green = cv2.inRange(hsv, (25, 35, 45), (95, 255, 255))
     if not include_led_shadow:
         return bright_green
 
-    # Sob LED roxo, folhas escuras migram para H 90-135 e perdem o verde clássico.
-    # O teto de V evita que plástico branco/rosa estourado vire planta.
+    # Sob LED roxo, folhas escuras migram para H 90-135 e perdem o verde classico.
+    # O teto de V evita que plastico branco/rosa estourado vire planta.
     led_shadow = cv2.inRange(hsv, (80, 18, 25), (135, 255, 225))
-    # Em LED magenta extremo, planta e substrato compartilham H ~145, mas as
-    # plantas mantêm saturação mais alta em campo.
-    magenta_leaf = cv2.inRange(hsv, (130, 190, 70), (175, 255, 235))
-    return cv2.bitwise_or(cv2.bitwise_or(bright_green, led_shadow), magenta_leaf)
+    return cv2.bitwise_or(bright_green, led_shadow)
+
+
+def _magenta_plant_mask(img_bgr: np.ndarray) -> np.ndarray:
+    """Mascara de tecido vegetal especifica para LED magenta extremo.
+
+    Sob LED magenta puro:
+    - Folhas verdes refletem PARCIALMENTE o LED e mantem residuo no canal G
+      (G ~30-40) porque sao verdes em natureza.
+    - Substrato seco/umido reflete o magenta intensamente (G ~5-25).
+    - Grade plastica reflete tudo (G ~25-30 mas V baixo nas linhas escuras
+      e V alto nas linhas claras).
+    - Bandeja vazia roxa nao tem material vegetal (G ~0-10).
+
+    O canal G do BGR diretamente separa planta de substrato; S e H sao
+    igualmente altos em todas as regioes magenta.
+
+    Threshold validado empiricamente em wa_ff81db007e67.jpeg:
+    plantas G=35, substrato G=19-26, grade G=26, bandeja vazia G=5.
+    """
+    hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+    h_ch = hsv[:, :, 0]
+    v_ch = hsv[:, :, 2]
+    g_ch = img_bgr[:, :, 1]
+    mask = (
+        (h_ch >= 125) & (h_ch <= 175)
+        & (g_ch >= 28)
+        & (v_ch >= 110)
+        & (v_ch <= 245)
+    ).astype(np.uint8) * 255
+    return mask
+
+
+def _plant_mask_auto(
+    img_bgr: np.ndarray,
+    quality: dict | None = None,
+) -> np.ndarray:
+    """Escolhe o detector de planta correto baseado na qualidade da luz.
+
+    Magenta extremo usa _magenta_plant_mask (canal G).
+    Outros casos usam _plant_mask_from_hsv (HSV ranges classicos).
+    """
+    if quality is None:
+        quality = _assess_image_quality(img_bgr)
+    if quality.get("issue") == "led_magenta":
+        return _magenta_plant_mask(img_bgr)
+    hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+    return _plant_mask_from_hsv(hsv, include_led_shadow=True)
 
 
 def _plant_signal_ratio(hsv_crop: np.ndarray) -> float:
@@ -512,11 +568,17 @@ def _leaf_based_germination_fallback(
 def _green_component_germination_fallback(
     img_bgr: np.ndarray,
     boxes: list[tuple[str, float, tuple[int, int, int, int]]],
+    quality: dict | None = None,
 ) -> list[tuple[str, float, tuple[int, int, int, int]]]:
     """Promove agrupamentos verdes grandes que o YOLO viu como planta/folha parcial."""
     h, w = img_bgr.shape[:2]
-    hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
-    mask = cv2.inRange(hsv, (25, 35, 45), (95, 255, 255))
+    if quality is None:
+        quality = _assess_image_quality(img_bgr)
+    if quality.get("issue") == "led_magenta":
+        mask = _plant_mask_auto(img_bgr, quality)
+    else:
+        hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+        mask = _plant_mask_from_hsv(hsv, include_led_shadow=False)
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
@@ -930,6 +992,7 @@ def _grid_cell_boxes(img_bgr: np.ndarray) -> list[tuple[int, int, int, int]]:
 def _tiny_green_germination_fallback(
     img_bgr: np.ndarray,
     boxes: list[tuple[str, float, tuple[int, int, int, int]]],
+    quality: dict | None = None,
 ) -> list[tuple[str, float, tuple[int, int, int, int]]]:
     """Adiciona mudas muito pequenas quando a célula da grade está vazia."""
     h, w = img_bgr.shape[:2]
@@ -939,8 +1002,13 @@ def _tiny_green_germination_fallback(
         if not cells:
             return boxes
 
-    hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
-    mask = _plant_mask_from_hsv(hsv, include_led_shadow=False)
+    if quality is None:
+        quality = _assess_image_quality(img_bgr)
+    if quality.get("issue") == "led_magenta":
+        mask = _plant_mask_auto(img_bgr, quality)
+    else:
+        hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+        mask = _plant_mask_from_hsv(hsv, include_led_shadow=False)
     mask = cv2.morphologyEx(
         mask,
         cv2.MORPH_OPEN,
@@ -991,8 +1059,8 @@ def _tiny_green_germination_fallback(
         if any(_box_center_inside(germ_bbox, cell) for germ_bbox in germ_boxes):
             continue
 
-        crop = hsv[y:y + bh, x:x + bw]
-        bright_ratio = cv2.countNonZero(_plant_mask_from_hsv(crop, include_led_shadow=False)) / max(bw * bh, 1)
+        crop_mask = mask[y:y + bh, x:x + bw]
+        bright_ratio = cv2.countNonZero(crop_mask) / max(bw * bh, 1)
         if bright_ratio < 0.08:
             continue
 
@@ -1011,6 +1079,7 @@ def _tiny_green_germination_fallback(
 def _grid_occupation_germination_fallback(
     img_bgr: np.ndarray,
     boxes: list[tuple[str, float, tuple[int, int, int, int]]],
+    quality: dict | None = None,
 ) -> list[tuple[str, float, tuple[int, int, int, int]]]:
     """Promove celulas da grade com massa verde acima do limiar.
 
@@ -1024,50 +1093,11 @@ def _grid_occupation_germination_fallback(
         if not cells:
             return boxes
 
-    hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
-    plant_mask = _plant_mask_from_hsv(hsv, include_led_shadow=True)
-
-    if (
-        cv2.countNonZero(plant_mask) < 500
-        and _assess_image_quality(img_bgr).get("issue") == "led_magenta"
-    ):
-        b, g, r = cv2.split(img_bgr.astype(np.float32))
-        intensity = 0.35 * b + 0.15 * g + 0.50 * r
-        intensity = cv2.normalize(intensity, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-        light = cv2.createCLAHE(clipLimit=1.5, tileGridSize=(8, 8)).apply(intensity)
-        lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB)
-        grid_mask = ((lab[:, :, 0] > 150) & (hsv[:, :, 2] > 230)).astype(np.uint8) * 255
-        grid_mask = cv2.morphologyEx(
-            grid_mask,
-            cv2.MORPH_OPEN,
-            cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2)),
-        )
-        grid_mask = cv2.morphologyEx(
-            grid_mask,
-            cv2.MORPH_CLOSE,
-            cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)),
-        )
-        shadow_mask = np.zeros((h, w), dtype=np.uint8)
-        for cell in cells:
-            cx1, cy1, cx2, cy2 = cell
-            cell_w, cell_h = cx2 - cx1, cy2 - cy1
-            if cell_w <= 12 or cell_h <= 12:
-                continue
-            margin_x = max(1, int(cell_w * 0.10))
-            margin_y = max(1, int(cell_h * 0.10))
-            ix1, iy1 = cx1 + margin_x, cy1 + margin_y
-            ix2, iy2 = cx2 - margin_x, cy2 - margin_y
-            if ix2 <= ix1 or iy2 <= iy1:
-                continue
-            crop_light = light[iy1:iy2, ix1:ix2]
-            valid = grid_mask[iy1:iy2, ix1:ix2] == 0
-            valid_pixels = crop_light[valid]
-            if valid_pixels.size < 50:
-                continue
-            threshold = float(np.percentile(valid_pixels, 25))
-            local_mask = (crop_light <= threshold) & valid
-            shadow_mask[iy1:iy2, ix1:ix2][local_mask] = 255
-        plant_mask = shadow_mask
+    if quality is None:
+        quality = _assess_image_quality(img_bgr)
+    plant_mask = _plant_mask_auto(img_bgr, quality)
+    raw_mask_coverage = float(cv2.countNonZero(plant_mask)) / max(h * w, 1)
+    sparse_magenta = quality.get("issue") == "led_magenta" and raw_mask_coverage < 0.08
 
     plant_mask = cv2.morphologyEx(
         plant_mask, cv2.MORPH_OPEN,
@@ -1075,10 +1105,14 @@ def _grid_occupation_germination_fallback(
     )
     plant_mask = cv2.morphologyEx(
         plant_mask, cv2.MORPH_CLOSE,
-        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)),
+        cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE,
+            (11, 11) if sparse_magenta else (5, 5),
+        ),
     )
 
     germ_boxes = [bbox for cls_name, _, bbox in boxes if cls_name in GERMINATION_CLASSES]
+    coverage_threshold = 0.025 if sparse_magenta else 0.18
 
     def _box_center_inside(
         box: tuple[int, int, int, int],
@@ -1104,7 +1138,7 @@ def _grid_occupation_germination_fallback(
         if cell_mask.size == 0:
             continue
         coverage = float(cv2.countNonZero(cell_mask)) / max(cell_mask.size, 1)
-        if coverage < 0.18:
+        if coverage < coverage_threshold:
             continue
         if any(_box_center_inside(germ_bbox, cell) for germ_bbox in germ_boxes):
             continue
@@ -1118,17 +1152,21 @@ def _grid_occupation_germination_fallback(
         bx2 = ix1 + int(xs.max()) + 1
         by2 = iy1 + int(ys.max()) + 1
         bbox = _expand_bbox((bx1, by1, bx2, by2), w, h, ratio=0.10)
-        conf = round(min(0.65, 0.32 + (coverage - 0.18) * 1.0), 3)
+        conf = round(min(0.65, 0.32 + max(0.0, coverage - coverage_threshold)), 3)
         additions.append(("Germinacao", conf, bbox))
 
     if additions:
-        print(f"  [germ] {len(additions)} germinacao(es) por grid occupation (coverage>=0.18)")
+        print(
+            f"  [germ] {len(additions)} germinacao(es) por grid occupation "
+            f"(coverage>={coverage_threshold:.3f})"
+        )
     return boxes + additions
 
 
 def _cluster_based_germination_fallback(
     img_bgr: np.ndarray,
     boxes: list[tuple[str, float, tuple[int, int, int, int]]],
+    quality: dict | None = None,
 ) -> list[tuple[str, float, tuple[int, int, int, int]]]:
     """Promove clusters contiguos grandes de plant_mask a germinacoes.
 
@@ -1139,14 +1177,25 @@ def _cluster_based_germination_fallback(
     h, w = img_bgr.shape[:2]
     img_area = float(h * w)
 
-    hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
-    plant_mask = _plant_mask_from_hsv(hsv, include_led_shadow=True)
+    if quality is None:
+        quality = _assess_image_quality(img_bgr)
+    if quality.get("issue") == "led_magenta":
+        plant_mask = _magenta_plant_mask(img_bgr)
+    else:
+        hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+        plant_mask = _plant_mask_from_hsv(hsv, include_led_shadow=True)
+    raw_mask_coverage = float(cv2.countNonZero(plant_mask)) / max(int(img_area), 1)
+    sparse_magenta = quality.get("issue") == "led_magenta" and raw_mask_coverage < 0.08
     # Morphology pra unir folhas separadas da mesma planta e suavizar borda.
     plant_mask = cv2.morphologyEx(
         plant_mask, cv2.MORPH_OPEN,
         cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)),
     )
-    close_k = min(5, max(3, int(min(h, w) * 0.004) | 1))
+    close_k = (
+        5
+        if sparse_magenta
+        else min(5, max(3, int(min(h, w) * 0.004) | 1))
+    )
     plant_mask = cv2.morphologyEx(
         plant_mask, cv2.MORPH_CLOSE,
         cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (close_k, close_k)),
@@ -1159,14 +1208,19 @@ def _cluster_based_germination_fallback(
     germ_boxes = [bbox for cls_name, _, bbox in boxes if cls_name in GERMINATION_CLASSES]
     additions: list[tuple[str, float, tuple[int, int, int, int]]] = []
 
-    min_area = max(400.0, img_area * 0.0004)  # ~0.04% da imagem.
+    min_area = (
+        max(45.0, img_area * 0.00003)
+        if sparse_magenta
+        else max(400.0, img_area * 0.0004)
+    )  # ~0.04% da imagem no caso normal.
+    min_dim = 14 if sparse_magenta else 20
     max_area = img_area * 0.15  # Cluster maior que 15% provavelmente eh varios juntos.
 
     for label_id in range(1, n_labels):
         x, y, bw, bh, area = stats[label_id]
         if area < min_area or area > max_area:
             continue
-        if bw < 20 or bh < 20:
+        if bw < min_dim or bh < min_dim:
             continue
         cx, cy = centroids[label_id]
 
@@ -1596,17 +1650,17 @@ def run_inference(
     # leaf_based depende de YOLO confiável de Folha, so fora de magenta
     if not magenta_mode:
         clamped_boxes = _leaf_based_germination_fallback(img_bgr, clamped_boxes, w, h)
-    # Fallbacks baseados em sinal verde HSV rodam em todos os modos
-    clamped_boxes = _green_component_germination_fallback(img_bgr, clamped_boxes)
-    clamped_boxes = _tiny_green_germination_fallback(img_bgr, clamped_boxes)
+    # Fallbacks baseados em sinal vegetal rodam em todos os modos.
+    clamped_boxes = _green_component_germination_fallback(img_bgr, clamped_boxes, image_quality)
+    clamped_boxes = _tiny_green_germination_fallback(img_bgr, clamped_boxes, image_quality)
     # Cluster-based: 1 planta por cluster contiguo. Em magenta_mode substitui
     # grid_occupation (mais preciso pra folhas grandes); em luz normal,
     # complementa grid_occupation (cobre o que escapou).
     if magenta_mode:
-        clamped_boxes = _cluster_based_germination_fallback(img_bgr, clamped_boxes)
+        clamped_boxes = _cluster_based_germination_fallback(img_bgr, clamped_boxes, image_quality)
     else:
-        clamped_boxes = _grid_occupation_germination_fallback(img_bgr, clamped_boxes)
-        clamped_boxes = _cluster_based_germination_fallback(img_bgr, clamped_boxes)
+        clamped_boxes = _grid_occupation_germination_fallback(img_bgr, clamped_boxes, image_quality)
+        clamped_boxes = _cluster_based_germination_fallback(img_bgr, clamped_boxes, image_quality)
     if magenta_mode:
         clamped_boxes = _filter_germination_centers_by_roi(clamped_boxes, _magenta_grid_roi(img_bgr))
     clamped_boxes = _filter_germination_by_green_signal(signal_img_bgr, clamped_boxes)
