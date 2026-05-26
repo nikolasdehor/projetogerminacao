@@ -257,21 +257,27 @@ def _assess_image_quality(img_bgr: np.ndarray) -> dict:
 
 
 def _enhance_for_yolo(img_bgr: np.ndarray, quality: dict) -> np.ndarray:
-    """Passa a imagem original para o YOLO por padrao.
+    """Pre-processa imagem so quando o modelo nao consegue enxergar o canal verde.
 
-    O modelo atual (treinado 2026-05-26 no Colab) foi treinado nas fotos cruas
-    do WhatsApp (com LED roxo/magenta natural), entao qualquer pre-processing
-    desvia a entrada da distribuicao de treino e atrapalha a deteccao alem de
-    cagar a cor da imagem anotada.
+    Para led_purple e luz normal: passa imagem original (o modelo treinado em
+    2026-05-26 aprendeu direto nessas fotos cruas, qualquer normalizacao desvia
+    da distribuicao de treino).
 
-    Compatibilidade com modelos antigos (treinados em luz neutra):
-    - GERMINAVISION_FORCE_NORMALIZE=1 reativa o pipeline antigo
-      (Gray World + CLAHE para luz normal/roxa, magenta-reconstruct para magenta extremo).
+    Para led_magenta extremo: precisa de _reconstruct_magenta_for_yolo porque
+    G fica em ~0-10 e o modelo nao consegue achar plantas. A reconstrucao
+    e SO para inferencia, nao afeta a imagem anotada de saida.
+
+    Toggles:
+    - GERMINAVISION_FORCE_NORMALIZE=1 reativa Gray World + CLAHE para luz normal/roxa
+    - GERMINAVISION_RAW_MAGENTA=1 desativa a reconstrucao em magenta extremo
     """
     if os.environ.get("GERMINAVISION_FORCE_NORMALIZE") == "1":
         if quality.get("issue") == "led_magenta":
             return _reconstruct_magenta_for_yolo(img_bgr)
         return _normalize_lighting(img_bgr)
+
+    if quality.get("issue") == "led_magenta" and os.environ.get("GERMINAVISION_RAW_MAGENTA") != "1":
+        return _reconstruct_magenta_for_yolo(img_bgr)
 
     return img_bgr
 
@@ -2183,11 +2189,13 @@ def run_inference(
         for cls_name, _, bbox in clamped_boxes
         if cls_name == LEAF_CLASS
     ]
-    img_annotated = (
-        _naturalize_magenta_for_display(img_bgr, img_for_inference, germ_boxes)
-        if magenta_mode
-        else img_bgr.copy()
-    )
+    # Anotacao sempre usa a imagem original (preserva cor real, mesmo em magenta).
+    # Para voltar a visualizacao pseudo-natural antiga, exporte
+    # GERMINAVISION_NATURALIZE_MAGENTA=1.
+    if magenta_mode and os.environ.get("GERMINAVISION_NATURALIZE_MAGENTA") == "1":
+        img_annotated = _naturalize_magenta_for_display(img_bgr, img_for_inference, germ_boxes)
+    else:
+        img_annotated = img_bgr.copy()
 
     # Ordena clamped_boxes: Germinacao top-down, left-right (centro y depois x)
     # Folhas ficam no final (não recebem plant_id)
