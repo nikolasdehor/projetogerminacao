@@ -88,6 +88,23 @@ class CellCountRegressionTest(unittest.TestCase):
         self.assertGreater(plant_mean[1], plant_mean[2])
         self.assertGreater(plant_mean[1], plant_mean[0])
 
+    def test_magenta_display_paints_green_beyond_yolo_boxes(self):
+        """Garante que folhas detectadas via HSV (fora dos germ_boxes) também aparecem verdes."""
+        image = load_image("tests/fixtures/images/magenta-full-tray.jpeg")
+        quality = _assess_image_quality(image)
+        enhanced = _enhance_for_yolo(image, quality)
+        # Sem germ_boxes (simula YOLO falhando totalmente)
+        display = _naturalize_magenta_for_display(image, enhanced, [])
+        from app.inference import _plant_mask_from_hsv
+        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        plant_mask = _plant_mask_from_hsv(hsv, include_led_shadow=True)
+        if cv2.countNonZero(plant_mask) < 500:
+            self.skipTest("HSV nao detecta planta nessa fixture")
+        plant_pixels = display[plant_mask > 0]
+        # Onde HSV detecta planta, display.G deve ser claramente maior que R e B
+        self.assertGreater(plant_pixels[:, 1].mean(), plant_pixels[:, 2].mean() + 10)
+        self.assertGreater(plant_pixels[:, 1].mean(), plant_pixels[:, 0].mean() + 10)
+
     def test_side_cropped_purple_tray_does_not_count_border_slivers(self):
         image = load_image("tests/fixtures/images/side-crop-purple-12-cells.jpeg")
 
@@ -121,6 +138,13 @@ class CellCountRegressionTest(unittest.TestCase):
         self.assertTrue(140 <= y1 <= 180)
         self.assertTrue(x2 <= 860)
         self.assertTrue(y2 <= 210)
+
+    def test_grid_occupation_finds_mature_overlapping_leaves(self):
+        from app.inference import _grid_occupation_germination_fallback
+        image = load_image("tests/fixtures/images/magenta-full-tray.jpeg")
+        result = _grid_occupation_germination_fallback(image, [])
+        germ = [b for cls, _, b in result if cls == "Germinacao"]
+        self.assertGreater(len(germ), 0, "grid occupation deveria detectar pelo menos uma planta madura")
 
 
 if __name__ == "__main__":

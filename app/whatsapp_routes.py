@@ -31,7 +31,7 @@ def _process_async(app, payload: dict) -> None:
     """Processa mensagem em background com app context."""
     try:
         with app.app_context():
-            _handle_message(payload)
+            process_webhook_message(payload)
     except Exception as exc:
         app.logger.exception(f"[worker] erro processando mensagem: {exc}")
     finally:
@@ -39,6 +39,7 @@ def _process_async(app, payload: dict) -> None:
             _queue_pending["count"] = max(0, _queue_pending["count"] - 1)
 
 from app.whatsapp import get_client
+from app.processed_messages import get_store
 from app.inference import parse_caption as _parse_caption
 
 wp = Blueprint("whatsapp", __name__)
@@ -219,6 +220,11 @@ def whatsapp_webhook():
     print(f"📱 Webhook recebido: {event}")
 
     if event in ("MESSAGES.UPSERT", "MESSAGES_UPSERT"):
+        message_id = _message_id(payload)
+        store = get_store()
+        if message_id and store.is_processed(message_id):
+            return jsonify({"ok": True, "skipped": "already_processed"}), 200
+
         with _queue_lock:
             if _queue_pending["count"] >= _MAX_QUEUE:
                 current_app.logger.warning(
@@ -240,7 +246,36 @@ def whatsapp_webhook():
 
 # ── Handler de mensagens ──────────────────────────────────────────────────────
 
-def _handle_message(payload: dict):
+def _message_id(message_data: dict) -> str:
+    return (
+        message_data.get("data", {}).get("key", {}).get("id")
+        or message_data.get("data", {}).get("messageId")
+        or ""
+    )
+
+
+def _message_timestamp(message_data: dict) -> int | None:
+    msg_ts = message_data.get("data", {}).get("messageTimestamp")
+    try:
+        return int(msg_ts) if msg_ts is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def process_webhook_message(message_data: dict) -> None:
+    """Processa uma message_data e marca como concluida no dedupe persistente."""
+    message_id = _message_id(message_data)
+    store = get_store()
+    if message_id and store.is_processed(message_id):
+        current_app.logger.info(f"[dedup] message_id ja processado: {message_id}")
+        return
+
+    handled = _handle_message(message_data)
+    if handled and message_id:
+        store.mark_processed(message_id, _message_timestamp(message_data))
+
+
+def _handle_message(payload: dict) -> bool:
     """Processa uma mensagem recebida pelo WhatsApp."""
     from flask import current_app
 
@@ -249,7 +284,7 @@ def _handle_message(payload: dict):
 
     # Ignora mensagens enviadas por nós mesmos
     if key.get("fromMe", False):
-        return
+        return False
 
     # Dedup thread-safe: descarta reentregas do mesmo webhook pela Evolution API
     msg_id = key.get("id", "")
@@ -257,7 +292,7 @@ def _handle_message(payload: dict):
         with _seen_ids_lock:
             if msg_id in _seen_msg_ids:
                 current_app.logger.info(f"[dedup] message_id duplicado ignorado: {msg_id}")
-                return
+                return False
             _seen_msg_ids.append(msg_id)
 
     remote_jid = key.get("remoteJid", "")
@@ -265,7 +300,7 @@ def _handle_message(payload: dict):
     sender = remote_jid.split("@")[0] if "@" in remote_jid else remote_jid
 
     if not sender:
-        return
+        return False
 
     msg = data.get("message", {})
 
@@ -273,7 +308,7 @@ def _handle_message(payload: dict):
     _ALLOWED_MSG_TYPES = {"imageMessage", "conversation", "extendedTextMessage", "documentMessage"}
     if msg and not any(k in msg for k in _ALLOWED_MSG_TYPES):
         current_app.logger.info(f"[skip] tipo de mensagem ignorado: {list(msg.keys())}")
-        return
+        return True
     client = get_client()
 
     # ── Imagem recebida → roda inferência ──────────────────────────────────
@@ -284,7 +319,7 @@ def _handle_message(payload: dict):
             or ""
         ).strip() or None
         _handle_image_message(client, sender, payload, raw_caption=raw_caption)
-        return
+        return True
 
     # ── Texto recebido → chatbot ou comandos ───────────────────────────────
     text = (
@@ -294,7 +329,7 @@ def _handle_message(payload: dict):
     ).strip().lower()
 
     if not text:
-        return
+        return True
 
     quoted = _extract_quoted_text(msg)
 
@@ -310,6 +345,8 @@ def _handle_message(payload: dict):
     else:
         # Passa para o GerminaBot (IA) com contexto de quote se houver
         _handle_chat_message(client, sender, text, quoted=quoted)
+
+    return True
 
 
 def _handle_image_message(client, sender: str, payload: dict, raw_caption: str | None = None):

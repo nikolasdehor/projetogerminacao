@@ -45,4 +45,24 @@ def create_app() -> Flask:
     from app.whatsapp_routes import wp
     app.register_blueprint(wp)
 
+    # Recovery de mensagens perdidas enquanto offline (best-effort)
+    try:
+        from app.whatsapp import get_client
+        from app.processed_messages import get_store
+        from app.recovery import recover_pending_messages
+        from app.whatsapp_routes import process_webhook_message
+
+        client = get_client()
+        if client.is_configured():
+            with app.app_context():
+                recovered = recover_pending_messages(
+                    client=client,
+                    store=get_store(),
+                    process_fn=process_webhook_message,
+                )
+            if recovered:
+                print(f"[recovery] {recovered} mensagem(ns) recuperada(s) on startup")
+    except Exception as exc:
+        print(f"[recovery] erro ao tentar recuperar mensagens: {exc}")
+
     return app

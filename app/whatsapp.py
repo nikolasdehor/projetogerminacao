@@ -109,6 +109,51 @@ class EvolutionClient:
 
     # ── Mensagens ──────────────────────────────────────────────────────────────
 
+    def find_pending_messages(
+        self,
+        since_timestamp: int | None = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        """Busca mensagens recebidas (fromMe=False) com filtro opcional por timestamp.
+
+        Retorna lista de message_data no mesmo formato que o webhook devolve,
+        com chave 'data' contendo {'key', 'message', 'messageTimestamp'}.
+        """
+        where: dict = {"key": {"fromMe": False}}
+        if since_timestamp is not None:
+            where["messageTimestamp"] = {"gte": since_timestamp}
+        body = {"where": where, "limit": limit}
+        try:
+            resp = self._request(
+                "POST",
+                f"/chat/findMessages/{self.instance_name}",
+                body,
+            )
+        except RuntimeError:
+            return []
+        # Resposta pode ter shapes diferentes: dict com messages/data/rows ou lista pura
+        if isinstance(resp, list):
+            raw_items = resp
+        elif isinstance(resp, dict):
+            raw_items = (
+                resp.get("messages")
+                or resp.get("data")
+                or resp.get("rows")
+                or resp.get("records")
+                or resp.get("result")
+                or []
+            )
+        else:
+            raw_items = []
+        # Normaliza pro shape de webhook: {"data": {...}}
+        normalized: list[dict] = []
+        for item in raw_items:
+            if not isinstance(item, dict):
+                continue
+            data = item if "key" in item else item.get("data") or item
+            normalized.append({"data": data})
+        return normalized
+
     def send_text(self, to: str, text: str) -> dict:
         """Envia mensagem de texto. `to` deve ser no formato 5511999999999."""
         return self._request("POST", f"/message/sendText/{self.instance_name}", {
