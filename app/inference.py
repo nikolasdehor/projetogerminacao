@@ -5,6 +5,7 @@ import os
 import re
 import time
 import uuid
+import math
 from pathlib import Path
 from typing import Optional
 
@@ -933,6 +934,237 @@ def _grid_bands_from_image(
     return bright_grid, vertical_bands, horizontal_bands
 
 
+def _detect_grid_via_edges(
+    img_bgr: np.ndarray,
+    quality: dict | None = None,
+) -> tuple[list[int], list[int]] | None:
+    """Detecta posicoes da grade via edges + Hough lines.
+
+    Retorna (vertical_xs, horizontal_ys) ou None se nao houver grade
+    detectavel. Funciona em luz normal, roxa e magenta porque depende de
+    contraste local (gradient), nao threshold absoluto de cor/brilho.
+    """
+    h, w = img_bgr.shape[:2]
+
+    # Equalizacao local para realcar o gradient da grade vs interior da cell.
+    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(16, 16))
+    enhanced = clahe.apply(gray)
+
+    # Thresholds baixos pegam edges sutis sob LED magenta.
+    edges = cv2.Canny(enhanced, 15, 60, apertureSize=3)
+
+    min_line_len = max(25, int(min(h, w) * 0.05))
+    max_line_gap = max(12, int(min(h, w) * 0.025))
+    lines = cv2.HoughLinesP(
+        edges,
+        rho=1,
+        theta=np.pi / 180,
+        threshold=25,
+        minLineLength=min_line_len,
+        maxLineGap=max_line_gap,
+    )
+    if lines is None or len(lines) < 4:
+        return None
+
+    raw_vertical = 0
+    raw_horizontal = 0
+
+    for line in lines:
+        x1, y1, x2, y2 = line[0]
+        dx, dy = abs(x2 - x1), abs(y2 - y1)
+        if dx == 0 and dy == 0:
+            continue
+        angle = np.degrees(np.arctan2(dy, dx))
+        if angle <= 15:
+            raw_horizontal += 1
+        elif angle >= 75:
+            raw_vertical += 1
+
+    if raw_vertical < 3 or raw_horizontal < 3:
+        return None
+
+    grad_x = np.abs(cv2.Sobel(enhanced, cv2.CV_32F, 1, 0, ksize=3))
+    grad_y = np.abs(cv2.Sobel(enhanced, cv2.CV_32F, 0, 1, ksize=3))
+    y_cut = max(1, int(h * 0.84))
+    score_x = grad_x[:y_cut, :].mean(axis=0) + edges[:y_cut, :].mean(axis=0) * 0.6
+    score_y = grad_y.mean(axis=1) + edges.mean(axis=1) * 0.6
+
+    def normalize_score(score: np.ndarray) -> np.ndarray:
+        smooth = np.convolve(score.astype(float), np.ones(7) / 7, mode="same")
+        low = float(np.percentile(smooth, 30))
+        high = float(np.percentile(smooth, 98))
+        return np.clip((smooth - low) / max(high - low, 1e-6), 0.0, 1.0)
+
+    min_dim = min(h, w)
+    min_spacing = max(60, int(min_dim * 0.075))
+    max_spacing = min(170, max(125, int(min_dim * 0.18)))
+
+    def peak_positions(norm_score: np.ndarray) -> list[tuple[int, float]]:
+        min_dist = max(35, int(min_spacing * 0.55))
+        threshold = max(float(np.percentile(norm_score, 72)), float(norm_score.max()) * 0.45)
+        remaining = norm_score.copy()
+        peaks: list[tuple[int, float]] = []
+        for _ in range(40):
+            idx = int(np.argmax(remaining))
+            value = float(remaining[idx])
+            if value < threshold:
+                break
+            peaks.append((idx, value))
+            lo = max(0, idx - min_dist)
+            hi = min(len(remaining), idx + min_dist + 1)
+            remaining[lo:hi] = 0
+        return sorted(peaks)
+
+    def spacing_candidates(peaks: list[tuple[int, float]]) -> list[tuple[float, int]]:
+        hist = np.zeros(max_spacing + 1, dtype=float)
+        for i, (a, va) in enumerate(peaks):
+            for b, vb in peaks[i + 1:]:
+                distance = b - a
+                for divisor in (1, 2, 3):
+                    spacing = distance / divisor
+                    if min_spacing <= spacing <= max_spacing:
+                        center = int(round(spacing))
+                        weight = math.sqrt(va * vb) / (divisor ** 0.25)
+                        lo = max(min_spacing, center - 3)
+                        hi = min(max_spacing, center + 3)
+                        for s in range(lo, hi + 1):
+                            hist[s] += weight * (1.0 - abs(s - spacing) / 4.0)
+
+        smooth = np.convolve(hist, np.ones(5) / 5, mode="same")
+        ranked = sorted(
+            ((float(smooth[s]), s) for s in range(min_spacing, max_spacing + 1) if smooth[s] > 0),
+            reverse=True,
+        )
+        selected: list[tuple[float, int]] = []
+        for vote, spacing in ranked:
+            if all(abs(spacing - chosen) > 8 for _, chosen in selected):
+                selected.append((vote, spacing))
+            if len(selected) >= 8:
+                break
+        return selected
+
+    def choose_spacing_pair(
+        x_candidates: list[tuple[float, int]],
+        y_candidates: list[tuple[float, int]],
+    ) -> tuple[int, int] | None:
+        best: tuple[float, int, int] | None = None
+        for vote_x, spacing_x in x_candidates:
+            for vote_y, spacing_y in y_candidates:
+                ratio = spacing_x / max(spacing_y, 1)
+                if not (0.65 <= ratio <= 1.45):
+                    continue
+                score = vote_x + vote_y - 12.0 * abs(math.log(ratio))
+                item = (score, spacing_x, spacing_y)
+                if best is None or item > best:
+                    best = item
+        if best is None:
+            return None
+        return best[1], best[2]
+
+    def fit_axis_positions(
+        norm_score: np.ndarray,
+        peaks: list[tuple[int, float]],
+        axis_len: int,
+        spacing: int,
+        min_lines: int,
+    ) -> list[int]:
+        peak_values = {position: value for position, value in peaks}
+        peak_pos = [position for position, _ in peaks]
+        best: tuple[float, list[int]] | None = None
+        start_spacing = max(45, int(spacing * 0.90))
+        end_spacing = int(spacing * 1.10)
+
+        for current_spacing in range(start_spacing, end_spacing + 1):
+            tolerance = max(10, int(current_spacing * 0.30))
+            for offset in range(0, current_spacing, 2):
+                hits: list[tuple[int, int, float, float]] = []
+                k = 0
+                predicted = offset
+                while predicted < axis_len:
+                    if axis_len * 0.01 <= predicted <= axis_len * 0.99:
+                        close = [p for p in peak_pos if abs(p - predicted) <= tolerance]
+                        if close:
+                            peak = max(close, key=lambda p: peak_values[p])
+                            hits.append(
+                                (
+                                    k,
+                                    peak,
+                                    peak_values[peak],
+                                    abs(float(peak) - float(predicted)),
+                                )
+                            )
+                    k += 1
+                    predicted = offset + k * current_spacing
+
+                if len(hits) < min_lines:
+                    continue
+                first, last = hits[0][0], hits[-1][0]
+                centers = [
+                    int(round(offset + k * current_spacing))
+                    for k in range(first, last + 1)
+                    if 0 <= offset + k * current_spacing < axis_len
+                ]
+                if len(centers) < min_lines:
+                    continue
+                coverage = len({hit[0] for hit in hits}) / len(centers)
+                if coverage < 0.52:
+                    continue
+                median_signal = float(np.median([hit[2] for hit in hits]))
+                residual = float(np.median([hit[3] for hit in hits])) / max(current_spacing, 1)
+                axis_score = (
+                    len(centers) * 0.55
+                    + len(hits) * 1.15
+                    + coverage * 2.0
+                    + median_signal * 2.0
+                    - residual * 5.0
+                )
+                item = (axis_score, centers)
+                if best is None or item[0] > best[0]:
+                    best = item
+
+        return best[1] if best is not None else []
+
+    norm_x = normalize_score(score_x)
+    norm_y = normalize_score(score_y)
+    peaks_x = peak_positions(norm_x)
+    peaks_y = peak_positions(norm_y)
+    spacing_pair = choose_spacing_pair(
+        spacing_candidates(peaks_x),
+        spacing_candidates(peaks_y),
+    )
+    if spacing_pair is None:
+        return None
+
+    spacing_x, spacing_y = spacing_pair
+    vert_centers = fit_axis_positions(norm_x, peaks_x, w, spacing_x, min_lines=6)
+    horiz_centers = fit_axis_positions(norm_y, peaks_y, h, spacing_y, min_lines=8)
+
+    if len(vert_centers) < 6 or len(horiz_centers) < 8:
+        return None
+
+    return vert_centers, horiz_centers
+
+
+def _grid_cell_boxes_from_edges(
+    img_bgr: np.ndarray,
+    quality: dict | None = None,
+) -> list[tuple[int, int, int, int]]:
+    """Gera bboxes de cells a partir das linhas detectadas via edges."""
+    detected = _detect_grid_via_edges(img_bgr, quality)
+    if detected is None:
+        return []
+    vert_xs, horiz_ys = detected
+    cells: list[tuple[int, int, int, int]] = []
+    for i in range(len(horiz_ys) - 1):
+        for j in range(len(vert_xs) - 1):
+            x1, x2 = vert_xs[j], vert_xs[j + 1]
+            y1, y2 = horiz_ys[i], horiz_ys[i + 1]
+            if x2 > x1 and y2 > y1:
+                cells.append((x1, y1, x2, y2))
+    return cells
+
+
 def _grid_cell_boxes_magenta(img_bgr: np.ndarray) -> list[tuple[int, int, int, int]]:
     """Estima cells dividindo a ROI da bandeja magenta em grade uniforme.
 
@@ -973,20 +1205,37 @@ def _grid_cell_boxes_magenta(img_bgr: np.ndarray) -> list[tuple[int, int, int, i
     return cells
 
 
-def _grid_cell_boxes(img_bgr: np.ndarray) -> list[tuple[int, int, int, int]]:
-    """Retorna boxes aproximadas das células visíveis da grade."""
+def _grid_cell_boxes(
+    img_bgr: np.ndarray,
+    quality: dict | None = None,
+) -> list[tuple[int, int, int, int]]:
+    """Retorna boxes aproximadas das celulas da grade.
+
+    Estrategia:
+    1. Bands brilhantes para luz normal/roxa com grade clara.
+    2. Edges + Hough para magenta extremo, onde cor/brilho absoluto falha.
+    """
     h, w = img_bgr.shape[:2]
     bright_grid, vertical_bands, horizontal_bands = _grid_bands_from_image(img_bgr)
     x_intervals = _axis_cell_intervals(vertical_bands, w, bright_grid, "x", horizontal_bands)
     y_intervals = _axis_cell_intervals(horizontal_bands, h, bright_grid, "y", vertical_bands)
-    if not x_intervals or not y_intervals:
-        return []
-    return [
-        (x1, y1, x2, y2)
-        for y1, y2 in y_intervals
-        for x1, x2 in x_intervals
-        if x2 > x1 and y2 > y1
-    ]
+    if x_intervals and y_intervals:
+        cells_bands = [
+            (x1, y1, x2, y2)
+            for y1, y2 in y_intervals
+            for x1, x2 in x_intervals
+            if x2 > x1 and y2 > y1
+        ]
+        if quality is None or quality.get("issue") != "led_magenta" or len(cells_bands) >= 20:
+            return cells_bands
+    else:
+        cells_bands = []
+
+    cells_edges = _grid_cell_boxes_from_edges(img_bgr, quality)
+    if cells_edges:
+        return cells_edges
+
+    return cells_bands
 
 
 def _tiny_green_germination_fallback(
@@ -996,14 +1245,14 @@ def _tiny_green_germination_fallback(
 ) -> list[tuple[str, float, tuple[int, int, int, int]]]:
     """Adiciona mudas muito pequenas quando a célula da grade está vazia."""
     h, w = img_bgr.shape[:2]
-    cells = _grid_cell_boxes(img_bgr)
+    if quality is None:
+        quality = _assess_image_quality(img_bgr)
+    cells = _grid_cell_boxes(img_bgr, quality)
     if not cells:
         cells = _grid_cell_boxes_magenta(img_bgr)
         if not cells:
             return boxes
 
-    if quality is None:
-        quality = _assess_image_quality(img_bgr)
     if quality.get("issue") == "led_magenta":
         mask = _plant_mask_auto(img_bgr, quality)
     else:
@@ -1087,14 +1336,14 @@ def _grid_occupation_germination_fallback(
     por area maxima. Usa a grade detectada como ancora.
     """
     h, w = img_bgr.shape[:2]
-    cells = _grid_cell_boxes(img_bgr)
+    if quality is None:
+        quality = _assess_image_quality(img_bgr)
+    cells = _grid_cell_boxes(img_bgr, quality)
     if not cells:
         cells = _grid_cell_boxes_magenta(img_bgr)
         if not cells:
             return boxes
 
-    if quality is None:
-        quality = _assess_image_quality(img_bgr)
     plant_mask = _plant_mask_auto(img_bgr, quality)
     raw_mask_coverage = float(cv2.countNonZero(plant_mask)) / max(h * w, 1)
     sparse_magenta = quality.get("issue") == "led_magenta" and raw_mask_coverage < 0.08
@@ -1249,6 +1498,142 @@ def _cluster_based_germination_fallback(
 
     if additions:
         print(f"  [germ] {len(additions)} germinacao(es) por cluster contiguo (connected components)")
+    return boxes + additions
+
+
+def _hybrid_grid_cluster_fallback(
+    img_bgr: np.ndarray,
+    boxes: list[tuple[str, float, tuple[int, int, int, int]]],
+    quality: dict | None = None,
+) -> list[tuple[str, float, tuple[int, int, int, int]]]:
+    """Contagem hibrida: 1 planta por cluster CONTIGUO DENTRO de cada cell.
+
+    Combina o melhor de grid_occupation (ancorar contagem na grade pra
+    rejeitar regioes fora) e cluster_based (1 planta por massa continua,
+    ao inves de 1 por cell ocupada). Cells vazias sao ignoradas; cells
+    com 2+ clusters distintos contam multiplas plantas; folhas que
+    extrapolam pra cell vizinha NAO inflam (a porcao fora da cell eh
+    cortada pelo bounding da cell).
+    """
+    h, w = img_bgr.shape[:2]
+    img_area = float(h * w)
+
+    if quality is None:
+        quality = _assess_image_quality(img_bgr)
+
+    cells = _grid_cell_boxes(img_bgr, quality)
+    magenta_cells: list[tuple[int, int, int, int]] = []
+    if quality.get("issue") == "led_magenta" or not cells:
+        magenta_cells = _grid_cell_boxes_magenta(img_bgr)
+    if magenta_cells and (
+        not cells or (quality.get("issue") == "led_magenta" and len(cells) < 8)
+    ):
+        cells = magenta_cells
+    if not cells:
+        return boxes
+
+    plant_mask = _plant_mask_auto(img_bgr, quality)
+    is_magenta = quality.get("issue") == "led_magenta"
+    plant_mask = cv2.morphologyEx(
+        plant_mask,
+        cv2.MORPH_CLOSE if is_magenta else cv2.MORPH_OPEN,
+        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)),
+    )
+
+    germ_boxes = [bbox for cls_name, _, bbox in boxes if cls_name in GERMINATION_CLASSES]
+
+    def _box_center_inside(
+        box: tuple[int, int, int, int],
+        cell: tuple[int, int, int, int],
+    ) -> bool:
+        x1, y1, x2, y2 = box
+        cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+        return cell[0] <= cx <= cell[2] and cell[1] <= cy <= cell[3]
+
+    additions: list[tuple[str, float, tuple[int, int, int, int]]] = []
+
+    # Min area pra cluster local dentro de uma cell. Escala com tamanho de
+    # cell tipico nas fotos do projeto.
+    if cells:
+        cell_areas = [(cell[2] - cell[0]) * (cell[3] - cell[1]) for cell in cells]
+        median_cell_area = float(sorted(cell_areas)[len(cell_areas) // 2])
+    else:
+        median_cell_area = img_area / 50
+    min_cluster_area = max(80.0, median_cell_area * (0.02 if is_magenta else 0.04))
+    coverage_threshold = 0.05 if is_magenta else 0.10
+
+    for cell in cells:
+        cx1, cy1, cx2, cy2 = cell
+        cell_w, cell_h = cx2 - cx1, cy2 - cy1
+        if cell_w <= 10 or cell_h <= 10:
+            continue
+
+        # Mascara local da cell com pequena margem interna pra evitar
+        # borda da grade contaminar.
+        mx = max(1, int(cell_w * 0.06))
+        my = max(1, int(cell_h * 0.06))
+        ix1, iy1 = cx1 + mx, cy1 + my
+        ix2, iy2 = cx2 - mx, cy2 - my
+        if ix2 <= ix1 or iy2 <= iy1:
+            continue
+
+        cell_mask = plant_mask[iy1:iy2, ix1:ix2]
+        if cell_mask.size == 0:
+            continue
+        coverage = float(cv2.countNonZero(cell_mask)) / max(cell_mask.size, 1)
+        if coverage < coverage_threshold:
+            continue
+
+        # Connected components DENTRO da cell: cada cluster eh uma planta.
+        n_labels, _labels, stats, _centroids = cv2.connectedComponentsWithStats(
+            cell_mask,
+            connectivity=8,
+        )
+
+        clusters_added_in_cell = 0
+        for label_id in range(1, n_labels):
+            cx, cy, cw, ch, area = stats[label_id]
+            if area < min_cluster_area:
+                continue
+            min_cluster_dim = 4 if is_magenta else 8
+            if cw < min_cluster_dim or ch < min_cluster_dim:
+                continue
+
+            abs_x1 = ix1 + int(cx)
+            abs_y1 = iy1 + int(cy)
+            abs_x2 = abs_x1 + int(cw)
+            abs_y2 = abs_y1 + int(ch)
+            bbox = _expand_bbox((abs_x1, abs_y1, abs_x2, abs_y2), w, h, ratio=0.05)
+
+            # Skipa se ja tem germ_box do YOLO cobrindo.
+            covered = any(
+                gx1 <= (abs_x1 + abs_x2) / 2.0 <= gx2
+                and gy1 <= (abs_y1 + abs_y2) / 2.0 <= gy2
+                for gx1, gy1, gx2, gy2 in germ_boxes
+            )
+            if covered:
+                continue
+
+            area_norm = min(1.0, area / max(median_cell_area * 0.5, 1.0))
+            conf = round(min(0.65, 0.38 + area_norm * 0.25), 3)
+            additions.append(("Germinacao", conf, bbox))
+            clusters_added_in_cell += 1
+
+        # Safety: se cell tem coverage alto mas nenhum cluster passou
+        # (massa fragmentada), adiciona 1 planta pra nao perder a cell.
+        if clusters_added_in_cell == 0 and coverage >= coverage_threshold:
+            ys, xs = np.where(cell_mask > 0)
+            if ys.size > 0:
+                bx1 = ix1 + int(xs.min())
+                by1 = iy1 + int(ys.min())
+                bx2 = ix1 + int(xs.max()) + 1
+                by2 = iy1 + int(ys.max()) + 1
+                bbox = _expand_bbox((bx1, by1, bx2, by2), w, h, ratio=0.05)
+                conf = round(min(0.55, 0.30 + coverage * 0.50), 3)
+                additions.append(("Germinacao", conf, bbox))
+
+    if additions:
+        print(f"  [germ] {len(additions)} planta(s) por hybrid grid+cluster (1 por cluster intra-cell)")
     return boxes + additions
 
 
@@ -1653,13 +2038,14 @@ def run_inference(
     # Fallbacks baseados em sinal vegetal rodam em todos os modos.
     clamped_boxes = _green_component_germination_fallback(img_bgr, clamped_boxes, image_quality)
     clamped_boxes = _tiny_green_germination_fallback(img_bgr, clamped_boxes, image_quality)
-    # Cluster-based: 1 planta por cluster contiguo. Em magenta_mode substitui
-    # grid_occupation (mais preciso pra folhas grandes); em luz normal,
-    # complementa grid_occupation (cobre o que escapou).
-    if magenta_mode:
-        clamped_boxes = _cluster_based_germination_fallback(img_bgr, clamped_boxes, image_quality)
-    else:
-        clamped_boxes = _grid_occupation_germination_fallback(img_bgr, clamped_boxes, image_quality)
+    # Hybrid grid+cluster: 1 planta por cluster contiguo DENTRO de cada cell.
+    # Resolve simultaneamente:
+    # - false positives (cells vazias com folha-respingo de vizinha)
+    # - sub-contagem (folhas tocando entre cells viravam 1 cluster)
+    # - bandeja vazia (sem grid_cells, naturalmente excluida)
+    clamped_boxes = _hybrid_grid_cluster_fallback(img_bgr, clamped_boxes, image_quality)
+    # Cluster global ainda eh util pra plantas fora da grade (ex: borda).
+    if not magenta_mode:
         clamped_boxes = _cluster_based_germination_fallback(img_bgr, clamped_boxes, image_quality)
     if magenta_mode:
         clamped_boxes = _filter_germination_centers_by_roi(clamped_boxes, _magenta_grid_roi(img_bgr))

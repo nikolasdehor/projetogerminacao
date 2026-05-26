@@ -113,6 +113,15 @@ class CellCountRegressionTest(unittest.TestCase):
         self.assertGreater(coverage, 0.03, "deveria detectar plantas")
         self.assertLess(coverage, 0.40, "nao deveria pegar substrato/bandeja vazia inteira")
 
+    def test_grid_cells_detected_under_extreme_magenta(self):
+        """Garante que em magenta a grade eh detectada via edges."""
+        from app.inference import _grid_cell_boxes
+        image = load_image("tests/fixtures/images/magenta-full-tray.jpeg")
+        quality = _assess_image_quality(image)
+        self.assertEqual(quality.get("issue"), "led_magenta")
+        cells = _grid_cell_boxes(image, quality)
+        self.assertGreater(len(cells), 20)
+
     def test_side_cropped_purple_tray_does_not_count_border_slivers(self):
         image = load_image("tests/fixtures/images/side-crop-purple-12-cells.jpeg")
 
@@ -168,6 +177,15 @@ class CellCountRegressionTest(unittest.TestCase):
         # A fixture pode ter contagem real diferente; aceita range amplo mas
         # confere que tem deteccao significativa e nao explode.
         self.assertGreater(len(germ), 5)
+        self.assertLess(len(germ), 80)
+
+    def test_hybrid_grid_cluster_counts_separately_inside_cell(self):
+        """Confirma que clusters intra-cell sao contados separadamente."""
+        from app.inference import _hybrid_grid_cluster_fallback
+        image = load_image("tests/fixtures/images/magenta-full-tray.jpeg")
+        result = _hybrid_grid_cluster_fallback(image, [])
+        germ = [b for cls, _, b in result if cls == "Germinacao"]
+        self.assertGreater(len(germ), 15)
         self.assertLess(len(germ), 80)
 
 
