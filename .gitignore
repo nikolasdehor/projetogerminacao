@@ -31,3 +31,4 @@ train_hsv.log
 agent-browser-*.png
 germinavision-*.png
 germina-ui-connected.png
+dataset/pending_manual_label/
