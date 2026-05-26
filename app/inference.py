@@ -2100,8 +2100,12 @@ def run_inference(
             names = class_names or fallback_names
             raw_boxes = _run_inference_sahi(norm_path, model_path, names)
             # Filtro class-aware: Germinacao aceita -0.07, Folha aceita -0.10
-            germ_conf = max(0.30, conf_threshold + 0.05) if magenta_mode else max(0.12, conf_threshold - 0.13)
-            folha_conf = max(0.20, conf_threshold - 0.05) if magenta_mode else max(0.15, conf_threshold - 0.10)
+            # Magenta thresholds: 0.30/0.20 antigos eram pra um pipeline com
+            # fallbacks blob salvando o que o YOLO nao pegava. Agora confiamos
+            # no modelo (treinado 2026-05-26) entao aplicamos os mesmos thresholds
+            # de luz normal: germ 0.12, folha 0.15.
+            germ_conf = max(0.12, conf_threshold - 0.13)
+            folha_conf = max(0.15, conf_threshold - 0.10)
             raw_boxes = [
                 d for d in raw_boxes
                 if (d["cls_name"] == "Germinacao" and d["conf"] >= germ_conf)
@@ -2110,7 +2114,7 @@ def run_inference(
             ]
         else:
             # Usa conf mais baixo no predict para capturar Germinacoes e Folhas periféricas
-            folha_conf = max(0.20, conf_threshold - 0.05) if magenta_mode else max(0.15, conf_threshold - 0.10)
+            folha_conf = max(0.15, conf_threshold - 0.10)
             results = model.predict(
                 source=img_for_inference,
                 conf=folha_conf,
