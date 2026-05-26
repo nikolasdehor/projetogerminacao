@@ -508,7 +508,7 @@ def _handle_image_message(
 
     # Notifica que estamos processando (com indicador "digitando..." para feedback visual)
     client.send_presence(reply_target, "composing", delay_ms=3000)
-    client.send_text(reply_target, "🌱 *Analisando a bandeja...*\nEstou procurando plantas, folhas e células visíveis.")
+    client.send_text(reply_target, "🌱 *Analisando a imagem...*\nEstou procurando plantas e folhas.")
 
     # Baixa a imagem
     image_path = client.download_media(payload, upload_dir)
@@ -629,8 +629,13 @@ def _handle_image_message(
         warnings.append("_ℹ️ Taxa calculada só sobre o recorte visível, não sobre a bandeja inteira._")
     warning_linha = "\n" + "\n".join(warnings) if warnings else ""
 
+    # Texto adaptativo: se detectou bandeja confiavelmente, fala "bandeja";
+    # senao, fala "imagem". Mantem linguagem natural ao inves de hardcoded.
+    tem_bandeja = rate_reliable and cells_origin in ("caption", "detected", "detected_visible")
+    titulo_objeto = "bandeja" if tem_bandeja else "imagem"
+
     texto = (
-        f"🌱 *Análise da Bandeja — GerminaVision*\n"
+        f"🌱 *GerminaVision — Análise da {titulo_objeto}*\n"
         f"{label_linha}\n"
         f"📊 *Resultados:*\n"
         f"{plants_line}"
@@ -724,7 +729,7 @@ def _handle_status_command(client, reply_target: str) -> None:
                 f"📷 _Envie uma foto para nova análise!_"
             )
         else:
-            texto = "📊 *Nenhuma análise registrada ainda.*\n\n📷 Envie uma foto de bandeja para começar!"
+            texto = "📊 *Nenhuma análise registrada ainda.*\n\n📷 Envie uma foto para começar!"
 
     except Exception as e:
         texto = f"❌ Erro ao consultar estatísticas: {e}"
@@ -768,7 +773,7 @@ def _handle_help_command(client, reply_target: str) -> None:
     """Envia menu de ajuda."""
     texto = (
         "🌱 *GerminaVision — Menu de Ajuda*\n\n"
-        "📷 *Envie uma foto* — Análise automática da bandeja\n"
+        "📷 *Envie uma foto* — Análise automática de plantas e folhas\n"
         "📊 *status* — Estatísticas gerais\n"
         "📋 *histórico* — Últimas 5 análises\n"
         "💡 *dica* — Dica de germinação\n"
