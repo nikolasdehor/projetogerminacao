@@ -59,15 +59,18 @@ def should_process_image(message: dict) -> tuple[bool, str]:
     Decide se imagem deve ser processada antes da inferência.
 
     Returns (process, reason).
-    reason in {'dm', 'whitelist', 'keyword', 'broadcast', 'no_keyword', 'no_whitelist'}
+    reason in {'dm', 'whitelist', 'keyword', 'broadcast', 'no_keyword', 'no_whitelist', 'unknown_jid_format'}
     """
     remote_jid: str = message.get("remoteJid", "")
 
     if remote_jid.endswith("@broadcast"):
         return False, "broadcast"
 
-    if not remote_jid.endswith("@g.us"):
+    if remote_jid.endswith("@s.whatsapp.net"):
         return True, "dm"
+
+    if not remote_jid.endswith("@g.us"):
+        return False, "unknown_jid_format"
 
     group_jid = remote_jid
     whitelist = _load_whitelist()
