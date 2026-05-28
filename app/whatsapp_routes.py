@@ -49,7 +49,7 @@ def _process_async(app, payload: dict) -> None:
 from app.whatsapp import get_client
 from app.processed_messages import get_store
 from app.inference import parse_caption as _parse_caption
-from app.guards import should_process_image, passes_post_inference_guard
+from app.guards import should_process_image, passes_post_inference_guard, _jid_truncated
 
 wp = Blueprint("whatsapp", __name__)
 
@@ -465,7 +465,7 @@ def _handle_message(payload: dict) -> bool:
         guard_msg = {"remoteJid": remote_jid, "caption": raw_caption or ""}
         process, guard_reason = should_process_image(guard_msg)
         if not process:
-            jid_short = remote_jid[-10:] if len(remote_jid) > 10 else remote_jid
+            jid_short = _jid_truncated(remote_jid)
             current_app.logger.info(
                 "guard_skip group=%s reason=%s caption_snippet=%.40s",
                 jid_short,
@@ -549,7 +549,7 @@ def _handle_image_message(
     )
     passes, post_reason = passes_post_inference_guard(detections, mean_conf)
     if not passes:
-        jid_short = reply_target[-10:] if len(reply_target) > 10 else reply_target
+        jid_short = _jid_truncated(reply_target)
         current_app.logger.info(
             "guard_skip group=%s reason=%s caption_snippet=%.40s",
             jid_short,

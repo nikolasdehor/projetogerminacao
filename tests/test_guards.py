@@ -80,6 +80,12 @@ class TestShouldProcessImage:
         assert process is False
         assert reason == "no_keyword"
 
+    def test_should_process_image_unknown_jid_silent(self):
+        msg = {"remoteJid": "xxx@newsletter", "caption": "qualquer coisa"}
+        process, reason = _call(msg)
+        assert process is False
+        assert reason == "unknown_jid_format"
+
 
 # ---------------------------------------------------------------------------
 # passes_post_inference_guard
