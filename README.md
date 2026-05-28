@@ -244,6 +244,14 @@ curl -X POST http://localhost:5001/api/analyze \
   -F "caption=128"
 ```
 
+## Retreino do modelo (Colab)
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/nikolasdehor/projetogerminacao/blob/main/colab/train_v4.ipynb)
+
+Clique no badge acima para abrir o notebook de retreino v4 direto no Google Colab. O notebook clona o repositório, monta o Google Drive para persistência de checkpoints e executa o pipeline completo de retreino com YOLO11s.
+
+Após o retreino, baixe o `best.pt` do Colab (ou do Drive em `MyDrive/projetogerminacao/runs/train/`) e commite em `models/best_v4.pt`. Para usar o novo modelo, aponte a variável `MODEL_PATH` no `.env` para `models/best_v4.pt`.
+
 ## Treinamento
 
 O projeto inclui scripts auxiliares para preparar e misturar datasets:
