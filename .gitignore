@@ -32,3 +32,6 @@ agent-browser-*.png
 germinavision-*.png
 germina-ui-connected.png
 dataset/pending_manual_label/
+
+# Whitelist de grupos (dados sensíveis, não versionar)
+config/group_whitelist.json
