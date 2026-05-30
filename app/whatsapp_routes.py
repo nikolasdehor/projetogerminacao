@@ -524,24 +524,54 @@ def _handle_image_message(
     client.send_presence(reply_target, "composing", delay_ms=3000)
     client.send_text(reply_target, "🌱 *Analisando a imagem...*\nEstou procurando plantas e folhas.")
 
-    # Baixa a imagem
-    image_path = client.download_media(payload, upload_dir)
+    # Baixa a imagem com timeout explicito via executor isolado.
+    # O Fluxo 3 do download_media pode travar em CLOSE_WAIT (CDN Meta fecha
+    # TCP sem TLS close_notify). socket.setdefaulttimeout esta configurado em
+    # download_media, mas usamos future.result(timeout=40) como segunda barreira.
+    import concurrent.futures as _cf
+    _dl_ex = _cf.ThreadPoolExecutor(max_workers=1, thread_name_prefix="wa-dl")
+    try:
+        _dl_fut = _dl_ex.submit(client.download_media, payload, upload_dir)
+        try:
+            image_path = _dl_fut.result(timeout=40)
+        except _cf.TimeoutError:
+            _dl_fut.cancel()
+            client.send_text(reply_target, "⚠️ Tempo limite ao baixar a imagem (CDN lento). Tente novamente.")
+            return
+    finally:
+        _dl_ex.shutdown(wait=False, cancel_futures=True)
+
     if not image_path:
         client.send_text(reply_target, "⚠️ Não consegui baixar a imagem. Tente enviar novamente.")
         return
 
-    # Roda inferência (capacidade da caption passada para sanity check interno)
+    # Roda inferência com timeout de 120s para evitar worker preso indefinidamente.
+    # SAHI em CPU pode levar ate 60s em fotos grandes; 120s da margem confortavel.
+    _inf_ex = _cf.ThreadPoolExecutor(max_workers=1, thread_name_prefix="wa-inf")
     try:
-        result = run_inference(
+        _inf_fut = _inf_ex.submit(
+            run_inference,
             image_path=image_path,
             model=current_app.config["MODEL"],
             result_folder=result_dir,
             conf_threshold=0.5,
             tray_capacity_override=tray_capacity_override,
         )
-    except Exception as e:
-        client.send_text(reply_target, f"❌ Erro na análise: {e}")
-        return
+        try:
+            result = _inf_fut.result(timeout=120)
+        except _cf.TimeoutError:
+            _inf_fut.cancel()
+            client.send_text(
+                reply_target,
+                "⏱️ A análise demorou mais que o esperado e foi cancelada.\n"
+                "Tente com uma imagem menor ou com melhor iluminação.",
+            )
+            return
+        except Exception as e:
+            client.send_text(reply_target, f"❌ Erro na análise: {e}")
+            return
+    finally:
+        _inf_ex.shutdown(wait=False, cancel_futures=True)
 
     detections = result.get("detections", [])
     mean_conf = (

@@ -243,16 +243,26 @@ class EvolutionClient:
                 raw = None
 
         # Fluxo 3: download direto via URL (com apikey no header)
+        # Timeout duplo: connect+read via urllib E leitura via socket.settimeout.
+        # Necessario porque CLOSE_WAIT (CDN Meta fecha TCP sem TLS close_notify)
+        # nao e detectado pelo timeout=30 do urllib — o socket fica bloqueado em
+        # SSL.read() esperando um close_notify que nunca chega.
         if not raw:
             media_url = image_msg.get("url") or image_msg.get("directPath")
             if media_url:
                 try:
+                    import socket as _socket
                     headers = {"apikey": self.api_key}
                     if self.host_header:
                         headers["Host"] = self.host_header
                     req = urllib.request.Request(media_url, headers=headers)
-                    with urllib.request.urlopen(req, timeout=30, context=self._ssl_context) as resp:
-                        raw = resp.read()
+                    _old_timeout = _socket.getdefaulttimeout()
+                    _socket.setdefaulttimeout(25)
+                    try:
+                        with urllib.request.urlopen(req, timeout=25, context=self._ssl_context) as resp:
+                            raw = resp.read()
+                    finally:
+                        _socket.setdefaulttimeout(_old_timeout)
                 except Exception:
                     raw = None
 
