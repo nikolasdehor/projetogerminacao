@@ -2278,7 +2278,7 @@ def run_inference(
                 source=img_for_inference,
                 conf=folha_conf,
                 imgsz=1280,
-                augment=True,
+                augment=False,  # TTA desativado: 3 forward passes em CPU triplicavam o tempo (15-60s)
                 verbose=False,
             )
             result = results[0]
