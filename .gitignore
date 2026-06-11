@@ -1,4 +1,5 @@
 venv/
+.venv/
 __pycache__/
 *.pyc
 *.pyo
@@ -17,6 +18,8 @@ dataset/**/labels.cache
 dataset/labels_backup/
 dataset/quarantine/
 dataset/autolabel_uploads/
+colab/*.zip
+models/*.bak_*
 
 # Saídas runtime do Flask (recriadas a cada análise)
 static/results/

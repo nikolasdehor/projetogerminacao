@@ -1,0 +1,9 @@
+# Dataset Morango - Germinacao (versao Colab)
+# Paths ajustados para execucao no Google Colab apos extrair dataset_v4.zip em /content/
+path: /content/dataset
+train: train/images
+val: valid/images
+test: test/images
+
+nc: 2
+names: ['Germinacao', 'Folha']

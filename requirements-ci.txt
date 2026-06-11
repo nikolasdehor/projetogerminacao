@@ -1,0 +1,7 @@
+# Dependências mínimas para CI sem pipeline de treino/inferência pesada.
+pytest>=8.4
+ruff>=0.6
+flask>=3.0
+numpy>=1.26
+opencv-python-headless>=4.10
+python-dotenv>=1.0.0

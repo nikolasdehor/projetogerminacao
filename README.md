@@ -286,6 +286,23 @@ Execute a suíte de regressão:
 python -m unittest discover -s tests
 ```
 
+No GitHub Actions, a barreira mínima de CI roda:
+
+```bash
+ruff check app tests scripts run.py
+python -m compileall -q app run.py tests
+pytest -q tests
+python scripts/ci_smoke.py
+```
+
+No bootstrap inicial, `ruff` e a suíte completa de `pytest` rodam como
+baseline não bloqueante no GitHub Actions; `compileall` e o smoke leve são os
+gates bloqueantes. Em 2026-06-03, a suíte completa ainda expõe 3 regressões
+conhecidas em visão/roteamento que devem ser tratadas antes de promover pytest
+para gate obrigatório.
+
+Observação: o smoke de startup completo (`run.py`) não é executado por padrão no CI para não forçar download de modelo YOLO (`best.pt`/`yolo11s.pt`) nem depender de infraestrutura pesada.
+
 Há testes cobrindo pontos sensíveis do projeto, incluindo:
 
 - contagem de células em recortes;
