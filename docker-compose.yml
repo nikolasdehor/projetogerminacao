@@ -1,0 +1,164 @@
+# GerminaVision + Evolution API v2 - Stack completa para PC Linux local
+#
+# Diagrama de fluxo:
+#
+#   WhatsApp (celular)
+#        |
+#        v
+#   Evolution API :8080  <---webhook POST /api/whatsapp/webhook---> GerminaVision :5001
+#        |                                                                  |
+#        |                 (rede interna germina-net)                      |
+#        +------ postgres :5432 (dados Evolution)                          |
+#        +------ redis :6379 (cache/sessao Evolution)                      |
+#                                                                   YOLO11 (CPU)
+#                                                                   SQLite (analises)
+#
+# Comunicacao interna: servicos se chamam por nome (ex: http://germinavision:5001)
+# Nenhuma porta precisa estar exposta ao exterior exceto 8080 (para o QR scan inicial)
+# e 5001 (opcional, para acesso a UI web local).
+
+version: "3.9"
+
+networks:
+  germina-net:
+    driver: bridge
+
+volumes:
+  germinavision-db:       # SQLite de analises (data/)
+  germinavision-uploads:  # Imagens recebidas (static/uploads/)
+  germinavision-results:  # Imagens anotadas pelo YOLO (static/results/)
+  evolution-instances:    # Sessao WhatsApp da Evolution (sem reescanear QR a cada restart)
+  postgres-data:          # Banco da Evolution API
+  redis-data:             # Cache/sessao Redis
+
+services:
+
+  # ── GerminaVision (Flask + YOLO11 CPU) ─────────────────────────────────────
+  germinavision:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: germinavision
+    restart: unless-stopped
+    networks:
+      - germina-net
+    ports:
+      - "127.0.0.1:5001:5001"   # UI web local acessivel so do host (nao expoe na LAN)
+    volumes:
+      - germinavision-db:/app/data
+      - germinavision-uploads:/app/static/uploads
+      - germinavision-results:/app/static/results
+      # Monta o diretorio models/ do host (somente leitura).
+      # O arquivo best.pt precisa existir em ./models/ antes de subir o stack.
+      - ./models:/app/models:ro
+    env_file:
+      - .env
+    environment:
+      # Aponta para a Evolution API pelo nome do servico na rede interna
+      EVOLUTION_API_URL: http://evolution-api:8080
+      # URL publica onde o webhook e acessivel pela Evolution API.
+      # Em producao local, use o IP da maquina na LAN (ex: http://192.168.1.100:5001)
+      # ou mantenha um tunnel Cloudflare se quiser acesso externo.
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://germinavision:5001}
+      EVOLUTION_SSL_VERIFY: "false"
+      EVOLUTION_API_HOST_HEADER: ""
+      PYTHONUNBUFFERED: "1"
+    depends_on:
+      - evolution-api
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5001/api/status', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s    # YOLO11 demora para carregar o modelo na primeira vez
+
+  # ── Evolution API v2 (gateway WhatsApp) ────────────────────────────────────
+  # Imagem oficial: atendai/evolution-api:v2.1.1 (verificada em 2026-06-16)
+  # Docs: https://doc.evolution-api.com/v2/pt/install/docker
+  evolution-api:
+    image: atendai/evolution-api:v2.1.1
+    container_name: evolution-api
+    restart: unless-stopped
+    networks:
+      - germina-net
+    ports:
+      - "127.0.0.1:8080:8080"  # Painel QR so acessivel do host local (nao exposto na LAN)
+    volumes:
+      - evolution-instances:/evolution/instances
+    env_file:
+      - .env
+    environment:
+      # Chave de autenticacao da API (deve coincidir com EVOLUTION_API_KEY no .env).
+      # O :? faz o docker compose falhar cedo se a variavel nao estiver definida.
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:?defina EVOLUTION_API_KEY no .env}
+      # URL propria da Evolution (usada em links gerados por ela)
+      SERVER_URL: http://evolution-api:8080
+      LOG_LEVEL: INFO
+
+      # Banco de dados PostgreSQL
+      DATABASE_ENABLED: "true"
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://${POSTGRES_USER:-evolution}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-evolution}
+      DATABASE_CONNECTION_CLIENT_NAME: evolution_v2
+      DATABASE_SAVE_DATA_INSTANCE: "true"
+      DATABASE_SAVE_DATA_NEW_MESSAGE: "true"
+      DATABASE_SAVE_MESSAGE_UPDATE: "true"
+      DATABASE_SAVE_DATA_CONTACTS: "true"
+      DATABASE_SAVE_DATA_CHATS: "true"
+      DATABASE_SAVE_DATA_LABELS: "true"
+      DATABASE_SAVE_DATA_HISTORIC: "true"
+
+      # Cache Redis
+      CACHE_REDIS_ENABLED: "true"
+      CACHE_REDIS_URI: redis://redis:6379/1
+      CACHE_REDIS_PREFIX_KEY: evolution_v2
+      CACHE_REDIS_SAVE_INSTANCES: "false"
+      CACHE_LOCAL_ENABLED: "false"
+
+      # Webhook global (opcional - a GerminaVision registra o webhook
+      # por instancia via /api/whatsapp/connect, entao isso pode ficar vazio)
+      WEBHOOK_GLOBAL_ENABLED: "false"
+
+      # Desativa integrações não utilizadas
+      RABBITMQ_ENABLED: "false"
+      DEL_INSTANCE: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ── PostgreSQL (banco da Evolution) ────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    container_name: evolution-postgres
+    restart: unless-stopped
+    networks:
+      - germina-net
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-evolution}
+      POSTGRES_USER: ${POSTGRES_USER:-evolution}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-evolution} -d ${POSTGRES_DB:-evolution}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis (cache/sessao da Evolution) ──────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: evolution-redis
+    restart: unless-stopped
+    networks:
+      - germina-net
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
