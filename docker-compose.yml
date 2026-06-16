@@ -43,7 +43,7 @@ services:
     networks:
       - germina-net
     ports:
-      - "5001:5001"       # UI web local (opcional, remova se nao precisar)
+      - "127.0.0.1:5001:5001"   # UI web local acessivel so do host (nao expoe na LAN)
     volumes:
       - germinavision-db:/app/data
       - germinavision-uploads:/app/static/uploads
@@ -88,8 +88,9 @@ services:
     env_file:
       - .env
     environment:
-      # Chave de autenticacao da API (deve coincidir com EVOLUTION_API_KEY no .env)
-      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY}
+      # Chave de autenticacao da API (deve coincidir com EVOLUTION_API_KEY no .env).
+      # O :? faz o docker compose falhar cedo se a variavel nao estiver definida.
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:?defina EVOLUTION_API_KEY no .env}
       # URL propria da Evolution (usada em links gerados por ela)
       SERVER_URL: http://evolution-api:8080
       LOG_LEVEL: INFO

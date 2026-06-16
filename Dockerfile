@@ -57,8 +57,15 @@ WORKDIR /app
 # Copia código-fonte do projeto
 COPY . .
 
-# Cria pastas de dados que o Flask espera (volumes serão montados sobre elas)
-RUN mkdir -p static/uploads static/results models data
+# Cria usuario nao-root dedicado para rodar a aplicacao
+RUN groupadd --gid 1001 appuser && \
+    useradd --uid 1001 --gid appuser --no-create-home --shell /bin/false appuser
+
+# Cria pastas de dados que o Flask espera (volumes serao montados sobre elas).
+# O chown garante que o usuario appuser consiga escrever nos volumes nomeados
+# (volumes criados vazios herdam o dono do diretorio da imagem).
+RUN mkdir -p static/uploads static/results models data && \
+    chown -R appuser:appuser /app
 
 # Força ultralytics a usar apenas CPU e a nao tentar baixar CUDA
 ENV ULTRALYTICS_DEVICE=cpu
@@ -70,6 +77,9 @@ ENV FLASK_ENV=production
 ENV PYTHONUNBUFFERED=1
 
 EXPOSE 5001
+
+# Executa como usuario nao-root (principio do menor privilegio)
+USER appuser
 
 # Usa gunicorn para producao; se quiser dev rapido, troque por: python run.py
 CMD ["python", "run.py"]
