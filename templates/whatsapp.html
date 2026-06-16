@@ -487,18 +487,25 @@
     }
   }
 
-  // Botao Conectar: busca QR para escanear
+  // Botao Conectar: cria instancia e exibe QR para escanear
   connectBtn.addEventListener('click', async () => {
     connectBtn.disabled = true;
     connectBtn.textContent = 'Gerando QR...';
     try {
-      const r = await fetch('/api/whatsapp/qr');
+      const r = await fetch('/api/whatsapp/connect', { method: 'POST' });
       const d = await r.json();
-      if (d.base64) {
-        qrImg.src = d.base64.startsWith('data:') ? d.base64 : 'data:image/png;base64,' + d.base64;
+      if (!r.ok || d.error) {
+        const msg = d.error || ('Erro ' + r.status + ' ao gerar QR. Tente novamente.');
+        alert('Erro ao conectar WhatsApp: ' + msg);
+      } else if (d.qrcode) {
+        qrImg.src = d.qrcode.startsWith('data:') ? d.qrcode : 'data:image/png;base64,' + d.qrcode;
         qrContainer.style.display = 'block';
+      } else {
+        alert('QR Code não retornado pela Evolution API. Verifique os logs do servidor.');
       }
-    } catch(e) { /* status poll reflete o estado real */ }
+    } catch(e) {
+      alert('Falha de rede ao tentar conectar WhatsApp: ' + e.message);
+    }
     connectBtn.disabled = false;
     connectBtn.textContent = 'Conectar WhatsApp';
   });
