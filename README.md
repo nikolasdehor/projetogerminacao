@@ -159,7 +159,66 @@ Fotos reais raramente são perfeitas. O projeto trata casos comuns encontrados e
 
 > O repositório ignora `.env`, pesos `.pt`, uploads e resultados gerados para evitar vazamento de dados locais.
 
-## Instalação
+## Rodando com Docker (recomendado para PC Linux local)
+
+A forma mais simples de subir o stack completo (GerminaVision + Evolution API + PostgreSQL + Redis) é via Docker Compose.
+
+### Pré-requisitos
+
+- Docker e Docker Compose instalados.
+- Arquivo `models/best.pt` presente no repositório.
+
+### Setup inicial
+
+```bash
+cp .env.example .env
+# Edite o .env e preencha os valores obrigatorios:
+#   EVOLUTION_API_KEY  - chave longa e aleatoria para a Evolution API
+#   POSTGRES_PASSWORD  - senha do banco (use apenas letras e numeros)
+#   OPENROUTER_API_KEY - chave para o chat agricola (opcional)
+#   PUBLIC_BASE_URL    - deixe vazio para usar a rede interna do Docker
+
+docker compose up -d --build
+```
+
+> **O `-d` roda o stack inteiro em background.** Nao e necessario deixar o terminal aberto.
+> Com `restart: unless-stopped` configurado em todos os servicos, o stack volta
+> automaticamente apos reboot do PC. O Docker e o servico: nao e necessario
+> launchd, supervisor nem tunnel externo para uso local.
+
+Se faltar `POSTGRES_PASSWORD` ou `EVOLUTION_API_KEY` no `.env`, o `docker compose up` para imediatamente com uma mensagem de erro clara, antes de subir qualquer container.
+
+### Conectar o WhatsApp
+
+1. Abra `http://localhost:5001/whatsapp` no navegador.
+2. Clique em **"Conectar WhatsApp"**.
+3. Escaneie o QR Code com o celular.
+
+> A Evolution API leva cerca de 15 a 30 segundos para inicializar o Baileys na primeira vez.
+> Se o QR vier vazio na primeira tentativa, aguarde alguns instantes e clique novamente.
+
+### Comandos do dia a dia
+
+```bash
+# Ver status dos servicos
+docker compose ps
+
+# Acompanhar logs em tempo real
+docker compose logs -f germinavision
+
+# Parar o stack (sem apagar dados)
+docker compose down
+```
+
+> **ATENCAO:** nunca use `docker compose down -v`. Esse comando apaga os volumes,
+> incluindo a sessao do WhatsApp (exige novo QR scan) e todos os dados do banco PostgreSQL.
+
+### Troubleshooting rapido
+
+- `up` reclama de `POSTGRES_PASSWORD` ou `EVOLUTION_API_KEY`: abra o `.env` e preencha a variavel indicada.
+- QR Code nao aparece na primeira vez: a Evolution API ainda esta inicializando. Aguarde 20 segundos e clique em "Conectar WhatsApp" novamente.
+
+## Instalacao (modo Python direto, sem Docker)
 
 ```bash
 python3 -m venv venv
@@ -175,9 +234,9 @@ Depois acesse:
 http://localhost:5001
 ```
 
-## Configuração
+## Configuracao
 
-As variáveis ficam em `.env`:
+As variaveis ficam em `.env`:
 
 | Variável | Obrigatória | Descrição |
 | --- | --- | --- |
