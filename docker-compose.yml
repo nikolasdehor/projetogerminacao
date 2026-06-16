@@ -82,7 +82,7 @@ services:
     networks:
       - germina-net
     ports:
-      - "8080:8080"       # Necessario para escanear QR Code via painel web
+      - "127.0.0.1:8080:8080"  # Painel QR so acessivel do host local (nao exposto na LAN)
     volumes:
       - evolution-instances:/evolution/instances
     env_file:
