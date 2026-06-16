@@ -1,0 +1,50 @@
+# Controle de versao
+.git
+.github
+.gitignore
+
+# Ambiente virtual Python local (nao entra no container)
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.ruff_cache/
+
+# Dados locais e uploads (montados como volume em producao)
+data/
+static/uploads/
+static/results/
+logs/
+
+# Datasets e treino (pesados, nao necessarios em runtime)
+dataset/
+runs/
+colab/
+train_hsv.log
+*.ipynb
+mix_datasets.py
+prepare_dataset.py
+pseudo_label_folha.py
+train.py
+data_train.yaml
+
+# Modelos de backup (so best.pt entra via volume mount)
+models/*.bak*
+models/best_pre_*.pt
+models/best_v2_*.pt
+
+# Docs e imagens de documentacao
+docs/
+*.md
+*.png
+*.jpg
+
+# Config de ferramentas locais
+.env
+.code-review-graph/
+.serena/
+.coderabbit.yaml
+.cursor/
