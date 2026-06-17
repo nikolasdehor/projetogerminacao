@@ -223,7 +223,17 @@ def whatsapp_connect():
     webhook_url = f"{public_url}/api/whatsapp/webhook" if public_url else None
 
     try:
-        result = client.create_instance(webhook_url=webhook_url)
+        try:
+            result = client.create_instance(webhook_url=webhook_url)
+        except RuntimeError as e:
+            # Instância já existe (Evolution recriou via Postgres no startup).
+            # Reinicia para forçar novo ciclo de QR e prossegue normalmente.
+            if "already in use" in str(e):
+                client.restart_instance()
+                result = {}
+            else:
+                raise
+
         qrcode_data = result.get("qrcode", {})
 
         if not qrcode_data:
